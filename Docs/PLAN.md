@@ -16,8 +16,20 @@
     `UAshBTService_DetectPlayer` + `UAshBTTask_ActivateAbilityByInputTag`; `BB_EnemyGeneral`,
     `BT_EnemyGeneral`, `B_EnemyGeneral`, NavMesh. Verified in PIE: detect → chase → attack
     (2026-06-21).
-- [] Phase 6: 8-Direction Combat Slot System
-- [] Phase 7: Base / Stronghold System
+- [x] Phase 6: 8-Direction Combat Slot System
+  - Complete: reusable `UAshCombatSlotComponent` (N-slot ring, `EAshCombatSlotState`
+    lifecycle, `RequestSlot`/`ReleaseSlot`/`GetSlotWorldLocation`/`FindBestAvailableSlot`,
+    owner-yaw-aware geometry), data-driven via `UAshCombatSlotConfig`, debug ring viz
+    (Tick gated on `bDrawDebugSlots`). Verification harness `AAshCombatSlotTestActor`.
+    Pending user C++ build + PIE run to confirm on-screen (2026-06-22).
+- [x] Phase 7: Base / Stronghold System
+  - Complete: `AAshBaseActor` (durability-capture model, sphere capture volume,
+    presence-driven defender/attacker counting, contested freeze, timer-driven update,
+    recovery delay) data-driven via `UAshBaseConfig`; ownership/durability/contested
+    delegates + BP UI hooks; `UAshBaseSubsystem` registry + global ownership-change
+    broadcast for AI; shared `IAshTeamAgentInterface` + `UAshTeamStatics` team
+    resolution (implemented on hero/general/dummy). Pending user C++ build + PIE run
+    to confirm a capture on-screen (2026-06-22).
 - [] Phase 8: Basic Soldier Prototype
 - [] Phase 9: Mass Entity Soldier Foundation
 - [] Phase 10: Mass Movement and Combat Processors

@@ -5,6 +5,7 @@
 #include "AbilitySystemInterface.h"
 #include "GameFramework/Character.h"
 #include "Teams/AshTeamTypes.h"
+#include "Teams/AshTeamAgentInterface.h"
 #include "AshHeroCharacter.generated.h"
 
 class UAshAbilitySystemComponent;
@@ -34,7 +35,7 @@ struct FInputActionValue;
  * LyraGame internals so the AshDraftCore plugin owns its own input/camera setup.
  */
 UCLASS()
-class ASHDRAFTCORERUNTIME_API AAshHeroCharacter : public ACharacter, public IAbilitySystemInterface
+class ASHDRAFTCORERUNTIME_API AAshHeroCharacter : public ACharacter, public IAbilitySystemInterface, public IAshTeamAgentInterface
 {
 	GENERATED_BODY()
 
@@ -63,6 +64,10 @@ public:
 	/** Sets the hero's team identity. */
 	UFUNCTION(BlueprintCallable, Category = "Ash|Team")
 	void SetTeamId(EAshTeamId NewTeamId) { TeamId = NewTeamId; }
+
+	//~IAshTeamAgentInterface
+	virtual EAshTeamId GetAshTeamId() const override { return TeamId; }
+	//~End of IAshTeamAgentInterface
 
 	/** Current health, read from the GAS AttributeSet. */
 	UFUNCTION(BlueprintPure, Category = "Ash|Health")

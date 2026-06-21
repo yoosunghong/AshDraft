@@ -5,6 +5,7 @@
 #include "AbilitySystemInterface.h"
 #include "GameFramework/Actor.h"
 #include "Teams/AshTeamTypes.h"
+#include "Teams/AshTeamAgentInterface.h"
 #include "AshGASTargetDummy.generated.h"
 
 class UAshAbilitySystemComponent;
@@ -30,7 +31,7 @@ struct FOnAttributeChangeData;
  * (or a Blueprint child with a visible mesh) in the PoC map in front of the hero.
  */
 UCLASS()
-class ASHDRAFTCORERUNTIME_API AAshGASTargetDummy : public AActor, public IAbilitySystemInterface
+class ASHDRAFTCORERUNTIME_API AAshGASTargetDummy : public AActor, public IAbilitySystemInterface, public IAshTeamAgentInterface
 {
 	GENERATED_BODY()
 
@@ -45,6 +46,10 @@ public:
 	//~IAbilitySystemInterface
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 	//~End of IAbilitySystemInterface
+
+	//~IAshTeamAgentInterface
+	virtual EAshTeamId GetAshTeamId() const override { return TeamId; }
+	//~End of IAshTeamAgentInterface
 
 	/** Current health, read from the GAS AttributeSet. */
 	UFUNCTION(BlueprintPure, Category = "Ash|Health")

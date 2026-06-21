@@ -5,6 +5,7 @@
 #include "AbilitySystemInterface.h"
 #include "GameFramework/Character.h"
 #include "Teams/AshTeamTypes.h"
+#include "Teams/AshTeamAgentInterface.h"
 #include "AshEnemyGeneralCharacter.generated.h"
 
 class UAshAbilitySystemComponent;
@@ -32,7 +33,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FAshOnGeneralDied, AAshEnemyGeneralC
  * phases use it to drive retreat / regroup decisions.
  */
 UCLASS()
-class ASHDRAFTCORERUNTIME_API AAshEnemyGeneralCharacter : public ACharacter, public IAbilitySystemInterface
+class ASHDRAFTCORERUNTIME_API AAshEnemyGeneralCharacter : public ACharacter, public IAbilitySystemInterface, public IAshTeamAgentInterface
 {
 	GENERATED_BODY()
 
@@ -55,6 +56,10 @@ public:
 	/** Team identity (Enemy by default). */
 	UFUNCTION(BlueprintPure, Category = "Ash|Team")
 	EAshTeamId GetTeamId() const { return TeamId; }
+
+	//~IAshTeamAgentInterface
+	virtual EAshTeamId GetAshTeamId() const override { return TeamId; }
+	//~End of IAshTeamAgentInterface
 
 	/** Current health, read from the GAS AttributeSet. */
 	UFUNCTION(BlueprintPure, Category = "Ash|Health")
