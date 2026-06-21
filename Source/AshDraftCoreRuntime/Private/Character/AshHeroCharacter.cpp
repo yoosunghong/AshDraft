@@ -1,0 +1,289 @@
+// Copyright YoosungHong. All Rights Reserved.
+
+#include "Character/AshHeroCharacter.h"
+
+#include "AbilitySystem/AshAbilitySystemComponent.h"
+#include "AbilitySystem/AshAttributeSet.h"
+#include "AbilitySystem/AshGameplayAbility.h"
+#include "AshGameplayTags.h"
+#include "Camera/CameraComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Controller.h"
+#include "GameFramework/SpringArmComponent.h"
+#include "Input/AshInputConfig.h"
+#include "InputActionValue.h"
+#include "UObject/ConstructorHelpers.h"
+
+namespace AshHeroCharacterConstants
+{
+	// Default content the hero ships with. These are overridable per-Blueprint/instance.
+	//static const TCHAR* SkeletalMeshPath		= TEXT("/Game/ParagonSunWukong/Characters/Heroes/Wukong/Skins/GreatSage/Meshes/Wukong_GreatSage.Wukong_GreatSage");
+	//static const TCHAR* AnimBlueprintClassPath	= TEXT("/Game/ParagonSunWukong/Characters/Heroes/Wukong/Animations/AnimBP_Wukong_Rigging.AnimBP_Wukong_Rigging_C");
+	//static const TCHAR* InputConfigPath			= TEXT("/AshDraftCore/Data/Input/DA_InputConfig_AshDefault.DA_InputConfig_AshDefault");
+	//static const TCHAR* MappingContextPath		= TEXT("/AshDraftCore/Input/IMC_AshDefault.IMC_AshDefault");
+}
+
+AAshHeroCharacter::AAshHeroCharacter(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	// No per-frame Actor Tick (ARCHITECTURE.md 18.3) — movement/anim/input are event-driven.
+	PrimaryActorTick.bCanEverTick = false;
+
+	// The controller drives camera yaw via the spring arm, not the capsule directly.
+	bUseControllerRotationPitch = false;
+	bUseControllerRotationYaw = false;
+	bUseControllerRotationRoll = false;
+
+	// Third-person action movement: face the direction of travel.
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		MoveComp->bOrientRotationToMovement = true;
+		MoveComp->RotationRate = FRotator(0.f, 540.f, 0.f);
+		MoveComp->bConstrainToPlane = true;
+		MoveComp->bSnapToPlaneAtStart = true;
+		MoveComp->MaxWalkSpeed = 600.f;
+		MoveComp->MinAnalogWalkSpeed = 20.f;
+		MoveComp->BrakingDecelerationWalking = 2000.f;
+	}
+
+	// Camera rig: boom orbits with control rotation, camera is fixed at its end.
+	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
+	CameraBoom->SetupAttachment(RootComponent);
+	CameraBoom->TargetArmLength = 500.f;
+	CameraBoom->bUsePawnControlRotation = true;
+
+	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
+	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
+	FollowCamera->bUsePawnControlRotation = false;
+
+	// GAS: single-player PoC keeps the ASC on the avatar (ARCHITECTURE.md 5).
+	// Replicated so the design stays server-authority-friendly (5.5 / 15).
+	AbilitySystemComponent = CreateDefaultSubobject<UAshAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
+	AbilitySystemComponent->SetIsReplicated(true);
+	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
+
+	AttributeSet = CreateDefaultSubobject<UAshAttributeSet>(TEXT("AttributeSet"));
+}
+
+UAbilitySystemComponent* AAshHeroCharacter::GetAbilitySystemComponent() const
+{
+	return AbilitySystemComponent;
+}
+
+void AAshHeroCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+}
+
+void AAshHeroCharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+
+	// Authority side: bind the ASC to this avatar, seed attributes, grant abilities.
+	InitializeAbilitySystem();
+}
+
+void AAshHeroCharacter::UnPossessed()
+{
+	Super::UnPossessed();
+}
+
+void AAshHeroCharacter::PawnClientRestart()
+{
+	Super::PawnClientRestart();
+
+	// Local-player input is available after (re)possession on the owning client.
+	AddDefaultMappingContext();
+
+	// Client side: refresh actor info so the local player's input drives the ASC.
+	InitializeAbilitySystem();
+}
+
+void AAshHeroCharacter::InitializeAbilitySystem()
+{
+	if (!AbilitySystemComponent)
+	{
+		return;
+	}
+
+	// Owner = avatar (PoC ASC lives on the character); safe to call on both sides.
+	AbilitySystemComponent->InitAbilityActorInfo(this, this);
+
+	if (HasAuthority())
+	{
+		InitializeAttributes();
+		GrantDefaultAbilities();
+	}
+}
+
+void AAshHeroCharacter::InitializeAttributes()
+{
+	if (!AbilitySystemComponent || !AttributeSet)
+	{
+		return;
+	}
+
+	// Seed base values from the editor-tunable initial stats (ARCHITECTURE.md 17).
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetMaxHealthAttribute(), InitialMaxHealth);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetHealthAttribute(), InitialMaxHealth);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetAttackPowerAttribute(), InitialAttackPower);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetDefenseAttribute(), InitialDefense);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetMaxStaminaAttribute(), InitialMaxStamina);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetStaminaAttribute(), InitialMaxStamina);
+}
+
+void AAshHeroCharacter::GrantDefaultAbilities()
+{
+	if (!AbilitySystemComponent || bAbilitiesGranted)
+	{
+		return;
+	}
+
+	for (const TSubclassOf<UAshGameplayAbility>& AbilityClass : DefaultAbilities)
+	{
+		if (!AbilityClass)
+		{
+			continue;
+		}
+
+		FGameplayAbilitySpec Spec(AbilityClass, 1, INDEX_NONE, this);
+
+		// Stamp the ability's input tag onto the spec so input routing can find it.
+		if (const UAshGameplayAbility* AbilityCDO = AbilityClass.GetDefaultObject())
+		{
+			const FGameplayTag& AbilityInputTag = AbilityCDO->GetInputTag();
+			if (AbilityInputTag.IsValid())
+			{
+				Spec.GetDynamicSpecSourceTags().AddTag(AbilityInputTag);
+			}
+		}
+
+		AbilitySystemComponent->GiveAbility(Spec);
+	}
+
+	bAbilitiesGranted = true;
+}
+
+float AAshHeroCharacter::GetHealth() const
+{
+	return AttributeSet ? AttributeSet->GetHealth() : 0.f;
+}
+
+float AAshHeroCharacter::GetMaxHealth() const
+{
+	return AttributeSet ? AttributeSet->GetMaxHealth() : 0.f;
+}
+
+float AAshHeroCharacter::GetHealthNormalized() const
+{
+	const float Max = GetMaxHealth();
+	return Max > 0.f ? GetHealth() / Max : 0.f;
+}
+
+void AAshHeroCharacter::AddDefaultMappingContext()
+{
+	if (!DefaultMappingContext)
+	{
+		return;
+	}
+
+	const APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		return;
+	}
+
+	if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
+		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()))
+	{
+		Subsystem->AddMappingContext(DefaultMappingContext, DefaultMappingContextPriority);
+	}
+}
+
+void AAshHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+	Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+	UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent);
+	if (!EnhancedInput || !InputConfig)
+	{
+		return;
+	}
+
+	// Movement.
+	if (const UInputAction* MoveAction = InputConfig->FindNativeInputActionForTag(AshGameplayTags::InputTag_Move))
+	{
+		EnhancedInput->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AAshHeroCharacter::Input_Move);
+	}
+
+	// Look (mouse + gamepad stick share one handler).
+	if (const UInputAction* LookMouseAction = InputConfig->FindNativeInputActionForTag(AshGameplayTags::InputTag_Look_Mouse))
+	{
+		EnhancedInput->BindAction(LookMouseAction, ETriggerEvent::Triggered, this, &AAshHeroCharacter::Input_Look);
+	}
+	if (const UInputAction* LookStickAction = InputConfig->FindNativeInputActionForTag(AshGameplayTags::InputTag_Look_Stick))
+	{
+		EnhancedInput->BindAction(LookStickAction, ETriggerEvent::Triggered, this, &AAshHeroCharacter::Input_Look);
+	}
+
+	// Ability inputs: each AbilityInputActions entry routes to GAS by its tag
+	// (Lyra-style data-driven binding). Pressed activates, released ends.
+	for (const FAshInputAction& AbilityInput : InputConfig->AbilityInputActions)
+	{
+		if (!AbilityInput.InputAction || !AbilityInput.InputTag.IsValid())
+		{
+			continue;
+		}
+
+		EnhancedInput->BindAction(AbilityInput.InputAction, ETriggerEvent::Started,
+			this, &AAshHeroCharacter::Input_AbilityTagPressed, AbilityInput.InputTag);
+		EnhancedInput->BindAction(AbilityInput.InputAction, ETriggerEvent::Completed,
+			this, &AAshHeroCharacter::Input_AbilityTagReleased, AbilityInput.InputTag);
+	}
+}
+
+void AAshHeroCharacter::Input_AbilityTagPressed(FGameplayTag InputTag)
+{
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->AbilityInputTagPressed(InputTag);
+	}
+}
+
+void AAshHeroCharacter::Input_AbilityTagReleased(FGameplayTag InputTag)
+{
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->AbilityInputTagReleased(InputTag);
+	}
+}
+
+void AAshHeroCharacter::Input_Move(const FInputActionValue& Value)
+{
+	AController* MovementController = GetController();
+	if (!MovementController)
+	{
+		return;
+	}
+
+	const FVector2D Axis = Value.Get<FVector2D>();
+
+	// Move relative to the camera's yaw so movement is screen-relative (third-person).
+	const FRotator YawRotation(0.f, MovementController->GetControlRotation().Yaw, 0.f);
+	const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
+	const FVector RightDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+
+	AddMovementInput(ForwardDirection, Axis.Y);
+	AddMovementInput(RightDirection, Axis.X);
+}
+
+void AAshHeroCharacter::Input_Look(const FInputActionValue& Value)
+{
+	const FVector2D Axis = Value.Get<FVector2D>();
+
+	AddControllerYawInput(Axis.X);
+	AddControllerPitchInput(Axis.Y);
+}
