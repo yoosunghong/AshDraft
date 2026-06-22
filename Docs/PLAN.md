@@ -81,7 +81,21 @@
     engine Cube). Processor made `UCLASS(config=Game)` and `ProxyClass`/LOD tunables config-backed
     in `Config/DefaultGame.ini` so the wiring now persists (guide §8) — REQUIRES REBUILD to take
     effect. Capped-promotion still needs a visual PIE pass.
-- [] Phase 14: Flow Field Navigation PoC
+- [x] Phase 14: Flow Field Navigation PoC
+  - Complete (code): `UAshFlowFieldConfig` (grid/cost tunables) + `UAshFlowFieldSubsystem`
+    (world-scoped grid auto-bounded to the bases' AABB; uniform cost field with optional
+    static-obstacle sampling; per-goal-cell Dijkstra integration field + baked best-direction
+    flow field, lazily solved and cached so a whole army sharing one target base shares one
+    solve). `UAshMassMovementProcessor` gained a config-backed `GroupNavMode` (Direct vs
+    FlowField) so group-objective steering reads the shared field instead of a straight line;
+    combat-target chase stays direct. Per-cell arrow debug viz via `bDrawFlowFieldDebug`
+    (DefaultGame.ini). Build verified (LyraEditor Win64, 2026-06-22).
+  - VERIFIED 2026-06-22 (MCP Simulate on BaseLevel): with one team (no combat targets) the Mass
+    army navigates the shared field and **cyan per-cell flow arrows render on the floor with the
+    cubes gathering along them** toward the objective base. Required a debug-draw fix: arrows are
+    placed above a per-cell ground-sampled height (`CellGroundZ`) because the grid plane sits at
+    the average base height, which on BaseLevel is below the floor. `GroupNavMode`/`bDrawFlowFieldDebug`
+    confirmed loading from DefaultGame.ini on the rebuilt binary.
 - [] Phase 15: Battlefield PoC Map
 - [] Phase 16: Victory, Defeat, and Match Flow
 - [] Phase 17: Telemetry and QA Bot Interface Preparation

@@ -6,6 +6,7 @@
 #include "Base/AshBaseActor.h"
 #include "Base/AshBaseSubsystem.h"
 #include "Engine/World.h"
+#include "Mass/AshFlowFieldSubsystem.h"
 #include "Mass/AshSoldierFragments.h"
 #include "MassExecutionContext.h"
 
@@ -62,6 +63,8 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 	const float DeltaTime = Context.GetDeltaTimeSeconds();
 	const UWorld* World = Context.GetWorld();
 	const UAshSquadSubsystem* SquadSubsystem = World ? World->GetSubsystem<UAshSquadSubsystem>() : nullptr;
+	UAshFlowFieldSubsystem* FlowField = (GroupNavMode == EAshGroupNavMode::FlowField && World)
+		? World->GetSubsystem<UAshFlowFieldSubsystem>() : nullptr;
 	const float ArrivalToleranceSq = ArrivalTolerance * ArrivalTolerance;
 
 	EntityQuery.ForEachEntityChunk(Context, [&](FMassExecutionContext& ChunkContext)
@@ -77,9 +80,12 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 			const FAshCombatFragment& Combat = CombatList[It];
 			const FAshSquadFragment& Squad = SquadList[It];
 
-			// 1. Resolve a destination, in priority order.
+			// 1. Resolve a destination, in priority order. bGroupObjective marks a shared goal
+			//    (squad objective / target base) eligible for flow-field steering; a combat
+			//    target is chased directly regardless of nav mode.
 			FVector Destination = Movement.Position;
 			bool bHasDestination = false;
+			bool bGroupObjective = false;
 			float StopDistance = ArrivalTolerance;
 
 			if (Combat.Target.IsSet() && EntityManager.IsEntityValid(Combat.Target))
@@ -100,6 +106,7 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 				{
 					Destination = SquadObjective;
 					bHasDestination = true;
+					bGroupObjective = true;
 				}
 			}
 
@@ -110,6 +117,7 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 				{
 					Destination = BaseLocation;
 					bHasDestination = true;
+					bGroupObjective = true;
 				}
 			}
 
@@ -120,7 +128,19 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 				const float DistSq = ToDest.SizeSquared2D();
 				if (DistSq > FMath::Square(StopDistance) && DistSq > ArrivalToleranceSq)
 				{
-					const FVector Dir = ToDest.GetSafeNormal2D();
+					// Flow-field direction for shared objectives (Phase 14); otherwise straight line.
+					FVector Dir;
+					if (bGroupObjective && FlowField)
+					{
+						FVector FlowDir;
+						Dir = FlowField->GetFlowDirection(Destination, Movement.Position, FlowDir)
+							? FlowDir
+							: ToDest.GetSafeNormal2D();
+					}
+					else
+					{
+						Dir = ToDest.GetSafeNormal2D();
+					}
 					Movement.Velocity = Dir * Movement.MoveSpeed;
 				}
 				else
@@ -136,4 +156,11 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 			Movement.Position += Movement.Velocity * DeltaTime;
 		}
 	});
+
+	// Visualise the shared flow field once per frame (Phase 14 debug). Gated so it costs
+	// nothing in Direct mode or when disabled.
+	if (bDrawFlowFieldDebug && FlowField)
+	{
+		FlowField->DrawDebug(World);
+	}
 }
