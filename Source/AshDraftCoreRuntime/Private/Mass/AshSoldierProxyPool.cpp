@@ -29,7 +29,7 @@ void UAshSoldierProxyPool::Deinitialize()
 
 void UAshSoldierProxyPool::ConfigurePool(TSubclassOf<AAshSoldierProxyActor> InProxyClass, int32 InMaxActiveProxies)
 {
-	ProxyClass = InProxyClass ? InProxyClass : AAshSoldierProxyActor::StaticClass();
+	ProxyClass = InProxyClass ? InProxyClass : TSubclassOf<AAshSoldierProxyActor>(AAshSoldierProxyActor::StaticClass());
 	MaxActiveProxies = FMath::Max(0, InMaxActiveProxies);
 }
 
@@ -41,7 +41,7 @@ AAshSoldierProxyActor* UAshSoldierProxyPool::SpawnProxy()
 		return nullptr;
 	}
 
-	const TSubclassOf<AAshSoldierProxyActor> ClassToSpawn = ProxyClass ? ProxyClass : AAshSoldierProxyActor::StaticClass();
+	const TSubclassOf<AAshSoldierProxyActor> ClassToSpawn = ProxyClass ? ProxyClass : TSubclassOf<AAshSoldierProxyActor>(AAshSoldierProxyActor::StaticClass());
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	return World->SpawnActor<AAshSoldierProxyActor>(ClassToSpawn, FVector::ZeroVector, FRotator::ZeroRotator, Params);

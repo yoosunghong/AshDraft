@@ -22,7 +22,10 @@ class AAshSoldierProxyActor;
  * pays Actor cost (ARCHITECTURE.md 13: "important things precise, large-scale things
  * cheap"). Runs after movement so proxies follow the latest positions; no Actor Tick.
  */
-UCLASS()
+// config=Game persists the EditDefaultsOnly tunables below to DefaultGame.ini under
+// [/Script/AshDraftCoreRuntime.AshMassRepresentationProcessor]. Without it, a non-config
+// native CDO has no on-disk persistence and ProxyClass resets to null on every editor launch.
+UCLASS(config = Game)
 class ASHDRAFTCORERUNTIME_API UAshMassRepresentationProcessor : public UMassProcessor
 {
 	GENERATED_BODY()
@@ -35,15 +38,15 @@ protected:
 	virtual void Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context) override;
 
 	/** LOD level (inclusive) at or below which a soldier is promoted to an Actor proxy. */
-	UPROPERTY(EditDefaultsOnly, Category = "Ash|Representation", meta = (ClampMin = "0", ClampMax = "3"))
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|Representation", meta = (ClampMin = "0", ClampMax = "3"))
 	int32 PromoteAtOrBelowLOD = 0;
 
 	/** Hard cap on simultaneously-active proxies, forwarded to UAshSoldierProxyPool. */
-	UPROPERTY(EditDefaultsOnly, Category = "Ash|Representation", meta = (ClampMin = "0"))
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|Representation", meta = (ClampMin = "0"))
 	int32 MaxActiveProxies = 100;
 
 	/** Proxy actor class to spawn (assign a Blueprint with a mesh for visible soldiers). */
-	UPROPERTY(EditDefaultsOnly, Category = "Ash|Representation")
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|Representation")
 	TSubclassOf<AAshSoldierProxyActor> ProxyClass;
 
 private:

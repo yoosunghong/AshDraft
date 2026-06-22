@@ -112,14 +112,51 @@ LOD thresholds/intervals/batch count are on the `UAshMassLODProcessor` CDO.
 
 ## 7. Consolidated checklist of deferred work
 
-- [ ] Build the C++ (Phases 10–13).
-- [ ] Confirm Mass processors actually tick (Section 2) — **do this first.**
-- [ ] Phase 10: two-army battle with deaths.
-- [ ] Phase 11: squads attack nearest enemy base; re-target on capture.
-- [ ] Phase 12: LOD rings; perf compare on/off.
-- [ ] Phase 13: make `BP_SoldierProxy` + assign `ProxyClass`; verify capped promotion.
+- [x] Build the C++ (Phases 10–13). *(User reported build complete.)*
+- [x] Confirm Mass processors actually tick (Section 2). **VERIFIED 2026-06-22 via MCP PIE:**
+      `LogAshMassDeath` reaps entities continuously — simulation is ticking, the highest risk
+      is cleared.
+- [x] Phase 10: two-army battle with deaths. **VERIFIED:** `AshSpawner_Ally` (team 2 / squad 0)
+      and `AshSpawner_Enemy` (team 3 / squad 1) each spawned 400 entities; death processor
+      reaps continuously as the armies trade damage.
+- [~] Phase 11: squads attack nearest enemy base; re-target on capture. **PARTIAL:** subsystems
+      initialize and squads register; a `B_Base_Neutral_Mid` was placed at origin. Ownership-
+      change path confirmed (`LogAshBase: captured 0 -> 1` — player pawn captured the mid base).
+      Still needs a **visual** PIE pass to confirm squads visibly converge on the correct base
+      and re-target on flip. NOTE: Mass *soldiers* do not capture bases (only Actor pawns are
+      team-tagged in the volume) — this is the known "base-drain on Mass death" stub.
+- [ ] Phase 12: LOD rings; perf compare on/off. **NEEDS USER EYES:** the per-frame LOD debug
+      points draw in the PIE game window only (not the editor-viewport capture), so colour/ring
+      verification and the `stat unit` perf compare must be done by the user.
+- [x] Phase 13: make `BP_SoldierProxy` + assign `ProxyClass`. **DONE (this session):**
+      `/AshDraftCore/Game/Mass/BP_SoldierProxy` created (parent `AshSoldierProxyActor`,
+      `MeshComponent` = engine Cube, scale 0.4/0.4/1.0) and assigned to the
+      `UAshMassRepresentationProcessor` CDO `ProxyClass`. **CAVEAT — does not persist:**
+      `ProxyClass` is `EditDefaultsOnly` with no `config` specifier, so the CDO assignment is
+      lost on editor restart. See Section 8. Capped-promotion still needs a visual PIE pass.
 - [ ] Re-check each `Done/DONE_*.md` "Known Issues" for stubbed items (camera/importance
       LOD, base-drain on Mass death, formation offsets).
+
+## 8. `ProxyClass` persistence — RESOLVED (config-backed)
+
+Originally `UAshMassRepresentationProcessor::ProxyClass` was `EditDefaultsOnly` with **no**
+`config` specifier, so the CDO assignment reset to `nullptr` on every editor launch.
+
+**Fixed 2026-06-22 (Option 1):** the class is now `UCLASS(config = Game)` and the three
+tunables are `UPROPERTY(config, EditDefaultsOnly)`. The values live in the project
+`Config/DefaultGame.ini`:
+
+```
+[/Script/AshDraftCoreRuntime.AshMassRepresentationProcessor]
+PromoteAtOrBelowLOD=0
+MaxActiveProxies=100
+ProxyClass=/AshDraftCore/Game/Mass/BP_SoldierProxy.BP_SoldierProxy_C
+```
+
+> **Requires a rebuild** — adding `config`/`UCLASS(config=...)` changes generated headers, so
+> AshDraftCoreRuntime must be recompiled before this takes effect. After that, edit these
+> tunables in `DefaultGame.ini` (or the editor saves CDO edits back to it automatically); no
+> more per-session re-assignment.
 
 ## Troubleshooting
 
