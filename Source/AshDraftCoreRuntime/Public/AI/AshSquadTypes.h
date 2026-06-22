@@ -1,0 +1,81 @@
+// Copyright YoosungHong. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Teams/AshTeamTypes.h"
+#include "AshSquadTypes.generated.h"
+
+/**
+ * AshSquadTypes.h
+ *
+ * Shared data definitions for the hierarchical AI layer (ARCHITECTURE.md 8). These are
+ * trivial POD-style definitions (an order enum + a squad state struct) grouped in one
+ * header because they are plain data shared by the squad subsystem, the commander
+ * subsystem, and the Mass processors that read squad objectives. Behavior lives in the
+ * subsystems/processors, never here.
+ */
+
+/**
+ * Strategic order assigned to a squad by the Commander AI (ARCHITECTURE.md 8.1).
+ * Mirrors the doc's "Order.*" vocabulary but kept as a cheap enum the Mass movement
+ * processor can branch on without touching Gameplay Tags per entity.
+ */
+UENUM(BlueprintType)
+enum class EAshSquadOrder : uint8
+{
+	/** No order yet; soldiers hold position. */
+	None		= 0	UMETA(DisplayName = "None"),
+
+	/** Advance on and capture the objective base (ARCHITECTURE.md 8.1 Order.AttackBase). */
+	AttackBase	= 1	UMETA(DisplayName = "Attack Base"),
+
+	/** Hold and protect the objective base (Order.DefendBase). */
+	DefendBase	= 2	UMETA(DisplayName = "Defend Base"),
+
+	/** Fall back toward the rally/objective location (Order.Retreat). */
+	Retreat		= 3	UMETA(DisplayName = "Retreat")
+};
+
+/**
+ * Squad-level state tracked by UAshSquadSubsystem (ARCHITECTURE.md 8.2).
+ *
+ * A squad is a logical group of Mass soldier entities sharing a SquadId. Rather than
+ * each soldier running strategic logic, the squad holds one objective and aggregate
+ * stats (average position, alive count) that the commander reasons over and the
+ * movement processor steers toward. This is the "shared target" the data-oriented
+ * rules call for (ARCHITECTURE.md 7.4).
+ */
+USTRUCT(BlueprintType)
+struct FAshSquadState
+{
+	GENERATED_BODY()
+
+	/** Unique squad id; matches FAshSquadFragment::SquadId on member entities. */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
+	int32 SquadId = INDEX_NONE;
+
+	/** Team this squad fights for. */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
+	EAshTeamId TeamId = EAshTeamId::Neutral;
+
+	/** Current strategic order from the commander. */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
+	EAshSquadOrder Order = EAshSquadOrder::None;
+
+	/** World-space objective the squad is moving to (e.g. the target base location). */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
+	FVector ObjectiveLocation = FVector::ZeroVector;
+
+	/** True once ObjectiveLocation has been assigned (distinguishes from a real zero objective). */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
+	bool bHasObjective = false;
+
+	/** Mean position of living members, refreshed by UAshMassSquadTrackingProcessor. */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
+	FVector AveragePosition = FVector::ZeroVector;
+
+	/** Count of living members from the last aggregation pass. */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
+	int32 AliveCount = 0;
+};

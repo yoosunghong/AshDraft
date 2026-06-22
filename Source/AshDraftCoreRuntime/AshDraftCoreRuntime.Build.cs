@@ -32,6 +32,12 @@ public class AshDraftCoreRuntime : ModuleRules
 				"EnhancedInput",
 				"AIModule",
 				"NavigationSystem",
+				// Mass Entity foundation for data-oriented soldiers (Phase 9+).
+				// MassCore provides FMassEntityHandle (Mass/EntityHandle.h) in UE5.8.
+				"MassCore",
+				"MassEntity",
+                "MassCommon",
+                "MassSpawner",
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
