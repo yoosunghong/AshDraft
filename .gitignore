@@ -1,0 +1,45 @@
+# ===========================================================================
+# AshDraftCore — standalone Game Feature Plugin repository .gitignore
+#
+# This repo IS the plugin. Drop it into a Lyra clone at:
+#   <LyraProject>/Plugins/GameFeatures/AshDraftCore/
+# then apply Docs/PROJECT_INTEGRATION.md.
+#
+# NOTE: Vendored art (Content/Data/Hero/ParagonSunWukong/) IS committed here
+# as plain Git objects — it is intentionally NOT ignored. Git LFS is not used
+# (largest file is under GitHub's 100 MB limit). See Docs/PROJECT_INTEGRATION.md.
+# ===========================================================================
+
+# --- Engine-generated / transient ---
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+
+# --- Generated IDE / solution files ---
+*.sln
+*.suo
+*.user
+*.VC.db
+*.VC.opendb
+*.sdf
+.vs/
+*.xcodeproj/
+*.xcworkspace/
+
+# --- Compiled binaries ---
+*.dll
+*.exe
+*.lib
+*.pdb
+*.so
+*.dylib
+*.app
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+*~
+*.swp
+*.stackdump
