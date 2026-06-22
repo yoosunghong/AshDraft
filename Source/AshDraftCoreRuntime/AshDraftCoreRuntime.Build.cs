@@ -38,6 +38,9 @@ public class AshDraftCoreRuntime : ModuleRules
 				"MassEntity",
                 "MassCommon",
                 "MassSpawner",
+				// Telemetry / QA-bot observation + log export to JSON (Phase 17).
+				"Json",
+				"JsonUtilities",
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);

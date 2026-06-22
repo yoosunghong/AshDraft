@@ -76,6 +76,69 @@ UAbilitySystemComponent* AAshHeroCharacter::GetAbilitySystemComponent() const
 void AAshHeroCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (AbilitySystemComponent)
+	{
+		// Watch Health so we can trigger death at zero (event-driven, ARCHITECTURE.md 15).
+		AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(
+			UAshAttributeSet::GetHealthAttribute()).AddUObject(this, &AAshHeroCharacter::OnHealthChanged);
+	}
+}
+
+void AAshHeroCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(
+			UAshAttributeSet::GetHealthAttribute()).RemoveAll(this);
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void AAshHeroCharacter::OnHealthChanged(const FOnAttributeChangeData& Data)
+{
+	if (bIsDead)
+	{
+		return;
+	}
+
+	// The attribute set already applied Ash.State.Dead at zero; handle the actor-side
+	// consequences once here (ARCHITECTURE.md 15).
+	if (Data.NewValue <= 0.f)
+	{
+		HandleDeath();
+	}
+}
+
+void AAshHeroCharacter::HandleDeath()
+{
+	if (bIsDead)
+	{
+		return;
+	}
+	bIsDead = true;
+
+	// Cancel any in-flight abilities and tag dead (the attribute set also tags on the ASC).
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->CancelAllAbilities();
+		AbilitySystemComponent->AddLooseGameplayTag(AshGameplayTags::State_Dead);
+	}
+
+	// Stop interaction/movement (placeholder for a death montage/ragdoll + respawn flow).
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		MoveComp->StopMovementImmediately();
+		MoveComp->DisableMovement();
+	}
+
+	// Notify listeners (the match loop ends as a defeat). Single-player PoC: death is terminal.
+	OnHeroDied.Broadcast(this);
 }
 
 void AAshHeroCharacter::PossessedBy(AController* NewController)

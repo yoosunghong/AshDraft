@@ -53,6 +53,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Ash|MassSoldier")
 	int32 GetSpawnedCount() const { return SpawnedEntities.Num(); }
 
+	/** Desired count the next (re)spawn will create. */
+	UFUNCTION(BlueprintPure, Category = "Ash|MassSoldier")
+	int32 GetDesiredSpawnCount() const { return SpawnCount; }
+
+	/** Sets how many soldiers the next (re)spawn creates (Phase 18 perf-harness driver). */
+	UFUNCTION(BlueprintCallable, Category = "Ash|MassSoldier")
+	void SetDesiredSpawnCount(int32 InCount) { SpawnCount = FMath::Max(0, InCount); }
+
+	/** Despawns all current entities then spawns SpawnCount fresh ones. Returns the new count. */
+	UFUNCTION(BlueprintCallable, Category = "Ash|MassSoldier")
+	int32 Respawn();
+
 protected:
 	/** Data-driven tuning seeded into each entity's fragments. Inline defaults used if null. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|MassSoldier")

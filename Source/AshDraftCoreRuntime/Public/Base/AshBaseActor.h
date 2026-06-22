@@ -75,6 +75,14 @@ public:
 	int32 GetAttackerCount() const { return AttackerCount; }
 
 	/**
+	 * True if this base is a "main"/home base. The match loop (UAshMatchSubsystem) treats a
+	 * player-side main base being captured by the enemy as an instant defeat (PLAN Phase 16).
+	 * Designers flag the ally and enemy home bases on the placed instance.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Ash|Base")
+	bool IsMainBase() const { return bIsMainBase; }
+
+	/**
 	 * Forward-looking hook for Phase 8: a defender of DefenderTeam died at/around the
 	 * base, draining durability. No-op if DefenderTeam is not the current owner.
 	 */
@@ -136,6 +144,13 @@ protected:
 	/** Team that owns the base at match start / current owner. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Base", meta = (AllowPrivateAccess = "true"))
 	EAshTeamId OwningTeam = EAshTeamId::Neutral;
+
+	/**
+	 * Marks this base as a main/home base for the match-flow loss condition (PLAN Phase 16).
+	 * Set true on the ally and enemy home bases in the level; the neutral mid base stays false.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Base", meta = (AllowPrivateAccess = "true"))
+	bool bIsMainBase = false;
 
 	/** Inline fallback max durability when Config is unset. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Base|Fallback", meta = (AllowPrivateAccess = "true", ClampMin = "1.0"))

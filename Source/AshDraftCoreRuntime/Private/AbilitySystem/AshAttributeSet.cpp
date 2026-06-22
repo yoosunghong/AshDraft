@@ -4,6 +4,7 @@
 
 #include "AshGameplayTags.h"
 #include "GameplayEffectExtension.h"
+#include "QA/AshTelemetrySubsystem.h"
 
 UAshAttributeSet::UAshAttributeSet()
 {
@@ -62,6 +63,20 @@ void UAshAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 		{
 			const float NewHealth = FMath::Clamp(GetHealth() - LocalDamage, 0.f, GetMaxHealth());
 			SetHealth(NewHealth);
+
+			// Telemetry: record the hit at the one authoritative damage choke point (Phase 17 /
+			// ARCHITECTURE.md 14.4). Soft, null-guarded — no dependency if telemetry is absent.
+			AActor* TargetActor = Data.Target.GetAvatarActor();
+			const FGameplayEffectContextHandle Context = Data.EffectSpec.GetContext();
+			AActor* SourceActor = Context.GetEffectCauser() ? Context.GetEffectCauser() : Context.GetOriginalInstigator();
+			if (UAshTelemetrySubsystem* Telemetry = UAshTelemetrySubsystem::Get(TargetActor))
+			{
+				const FName EventType = (NewHealth <= 0.f) ? FName(TEXT("Kill")) : FName(TEXT("Damage"));
+				Telemetry->LogCombatEvent(
+					SourceActor ? SourceActor->GetName() : TEXT("<unknown>"),
+					TargetActor ? TargetActor->GetName() : TEXT("<unknown>"),
+					LocalDamage, EventType);
+			}
 		}
 	}
 

@@ -39,6 +39,15 @@ void AAshMassSoldierSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
+int32 AAshMassSoldierSpawner::Respawn()
+{
+	DespawnSoldiers();
+	const int32 NewCount = SpawnSoldiers();
+	UE_LOG(LogAshMassSoldier, Log, TEXT("AAshMassSoldierSpawner '%s': respawned %d soldiers (Team=%d, Squad=%d)."),
+		*GetName(), NewCount, static_cast<int32>(TeamId), SquadId);
+	return NewCount;
+}
+
 int32 AAshMassSoldierSpawner::SpawnSoldiers()
 {
 	if (SpawnCount <= 0)

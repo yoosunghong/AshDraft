@@ -7,6 +7,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Mass/AshSoldierFragments.h"
 #include "MassExecutionContext.h"
+#include "Performance/AshPerfStatics.h"
 
 #if ENABLE_DRAW_DEBUG
 #include "DrawDebugHelpers.h"
@@ -65,7 +66,10 @@ void UAshMassLODProcessor::Execute(FMassEntityManager& EntityManager, FMassExecu
 		}
 	}
 
-	const int32 BatchCount = FMath::Max(1, NumTimeSliceBatches);
+	// Phase 18 toggles: disabling LOD forces every soldier to full fidelity; disabling time
+	// slicing collapses to one batch so the whole population is re-evaluated each frame.
+	const bool bLODEnabled = AshPerf::IsLODEnabled();
+	const int32 BatchCount = (bLODEnabled && AshPerf::IsTimeSlicingEnabled()) ? FMath::Max(1, NumTimeSliceBatches) : 1;
 	const int32 ActiveBatch = FrameCounter % BatchCount;
 	++FrameCounter;
 
@@ -81,8 +85,16 @@ void UAshMassLODProcessor::Execute(FMassEntityManager& EntityManager, FMassExecu
 			const int32 ThisIndex = GlobalIndex++;
 			FAshLODFragment& LOD = LODList[It];
 
-			// Time slicing: only re-evaluate this soldier's LOD on its assigned frame.
-			if ((ThisIndex % BatchCount) == ActiveBatch)
+			if (!bLODEnabled)
+			{
+				// LOD disabled (Phase 18 baseline): everyone is LOD 0 and never throttled, so the
+				// combat processor (which gates on UpdateInterval) runs full-rate for all soldiers.
+				LOD.LODLevel = 0;
+				LOD.UpdateInterval = 0.f;
+			}
+			// Time slicing: only re-evaluate this soldier's LOD on its assigned frame
+			// (BatchCount collapses to 1 when time slicing is disabled, so this is always true).
+			else if ((ThisIndex % BatchCount) == ActiveBatch)
 			{
 				const float Distance = bHasPlayer
 					? FVector::Dist(PlayerLocation, MovementList[It].Position)

@@ -17,6 +17,10 @@ class UInputMappingContext;
 class USpringArmComponent;
 struct FGameplayTag;
 struct FInputActionValue;
+struct FOnAttributeChangeData;
+
+/** Broadcast once when the hero's health first reaches zero (event-driven death). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FAshOnHeroDied, AAshHeroCharacter*, Hero);
 
 /**
  * AAshHeroCharacter
@@ -44,6 +48,7 @@ public:
 
 	//~AActor interface
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	//~End of AActor interface
 
 	//~APawn interface
@@ -81,7 +86,21 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Ash|Health")
 	float GetHealthNormalized() const;
 
+	/** True once health has reached zero and death has been handled. */
+	UFUNCTION(BlueprintPure, Category = "Ash|Health")
+	bool IsDead() const { return bIsDead; }
+
+	/** Fired when the hero dies. The match loop binds here for the player-death defeat. */
+	UPROPERTY(BlueprintAssignable, Category = "Ash|Health")
+	FAshOnHeroDied OnHeroDied;
+
 protected:
+	/** Health-changed handler: triggers death at zero. */
+	void OnHealthChanged(const FOnAttributeChangeData& Data);
+
+	/** One-time death handling: cancels abilities, disables input/collision, broadcasts. */
+	void HandleDeath();
+
 	/** Move input handler: translates a 2D axis into world movement relative to control yaw. */
 	void Input_Move(const FInputActionValue& Value);
 
@@ -165,4 +184,7 @@ private:
 
 	/** Guards one-time ability granting across PossessedBy / BeginPlay. */
 	bool bAbilitiesGranted = false;
+
+	/** Guards one-time death handling. */
+	bool bIsDead = false;
 };
