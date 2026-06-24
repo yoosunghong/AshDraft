@@ -5,6 +5,7 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "Mass/AshMassLODConfig.h"
 #include "Mass/AshSoldierFragments.h"
 #include "MassExecutionContext.h"
 #include "Performance/AshPerfStatics.h"
@@ -37,6 +38,28 @@ void UAshMassLODProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>
 	EntityQuery.AddRequirement<FAshLODFragment>(EMassFragmentAccess::ReadWrite);
 }
 
+void UAshMassLODProcessor::ResolveConfig()
+{
+	if (bConfigResolved)
+	{
+		return;
+	}
+	bConfigResolved = true;
+
+	// Synchronous load is acceptable: this runs once, and the config is a tiny UDataAsset.
+	if (const UAshMassLODConfig* Config = LODConfig.LoadSynchronous())
+	{
+		LOD0MaxDistance = Config->LOD0MaxDistance;
+		LOD1MaxDistance = Config->LOD1MaxDistance;
+		LOD2MaxDistance = Config->LOD2MaxDistance;
+		for (int32 i = 0; i < 4; ++i)
+		{
+			LODUpdateIntervals[i] = Config->LODUpdateIntervals[i];
+		}
+		NumTimeSliceBatches = FMath::Max(1, Config->NumTimeSliceBatches);
+	}
+}
+
 int32 UAshMassLODProcessor::ComputeLODLevel(float Distance) const
 {
 	if (Distance <= LOD0MaxDistance) { return 0; }
@@ -52,6 +75,9 @@ void UAshMassLODProcessor::Execute(FMassEntityManager& EntityManager, FMassExecu
 	{
 		return;
 	}
+
+	// Apply the optional data-asset overrides once (no-op when no config is assigned).
+	ResolveConfig();
 
 	// LOD reference point: the local player pawn. Resolved softly (no hard hero dependency,
 	// ARCHITECTURE.md 18.4); when absent every soldier falls back to the farthest LOD.

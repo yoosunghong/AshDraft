@@ -24,6 +24,10 @@ Goal: Reduce simulation cost by updating units based on importance.
   - Per-frame LOD-coloured point per soldier (green/yellow/orange/red) when `bDrawLODDebug`.
 - [ ] Compare performance before and after LOD
   - PENDING USER: needs PIE + `stat unit` / `stat mass`. See guide.
+- [x] Promote LOD tunables to a `UAshMassLODConfig` data asset (for RL / automated perf sweeps)
+  - `UAshMassLODConfig` (thresholds + `LODUpdateIntervals[4]` + `NumTimeSliceBatches`);
+    `UAshMassLODProcessor` resolves it once on first Execute via a config-persisted
+    `TSoftObjectPtr` (config=Game), falling back to inline ctor defaults when unassigned.
 - [x] Create `Done/DONE_ai_lod_time_slicing.md`
 
 ## Notes for compile / editor / verification (do later)
