@@ -10,6 +10,8 @@
 
 class AAshBaseActor;
 class AAshHeroCharacter;
+class AAshEnemyGeneralCharacter;
+class UAshMatchRulesConfig;
 
 /** Match started: fired once when the loop begins (after all actors BeginPlay). */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FAshOnMatchStarted);
@@ -28,11 +30,18 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FAshOnMatchStateChanged, EAshMatchSt
  * phase calls for, then broadcasts a terminal result the UI observes:
  *
  *   - Victory: the player side (Player/Ally) owns *every* registered base.
+ *   - Victory: every enemy general in the level has been eliminated.
  *   - Defeat:  the playable hero dies.
  *   - Defeat:  a player-side *main* base (AAshBaseActor::IsMainBase) is captured by the enemy.
+ *   - Time limit: surviving the clock wins, or running out of time loses (designer's choice).
+ *
+ * Which of these are active is data-driven (PLAN Phase 15): a UAshMatchRulesConfig supplied by
+ * an AAshMatchRulesActor placed in the level. With no rules actor the defaults reproduce the
+ * original Phase 16 behavior (all bases captured = victory; hero death / main base lost = defeat).
  *
  * It reacts to events rather than polling (ARCHITECTURE.md 18.3): it binds once to
- * UAshBaseSubsystem::OnAnyBaseOwnershipChanged and to the hero's OnHeroDied delegate. UI
+ * UAshBaseSubsystem::OnAnyBaseOwnershipChanged, the hero's OnHeroDied, and each enemy general's
+ * OnGeneralDied delegate; the time limit is a single world timer. UI
  * reads results through the BlueprintAssignable delegates below — the subsystem never owns
  * UI or AI (ARCHITECTURE.md 16 / 18.4). As a UMG-free fallback it also prints the result
  * on screen so the loop is verifiable in PIE before any widget exists.
@@ -100,11 +109,31 @@ private:
 	UFUNCTION()
 	void HandleHeroDied(AAshHeroCharacter* Hero);
 
+	/** Bound to each enemy general; wins the match once the last one dies (if enabled). */
+	UFUNCTION()
+	void HandleGeneralDied(AAshEnemyGeneralCharacter* General);
+
+	/** Fires when the optional time limit elapses; ends the match per the rules' outcome. */
+	void HandleTimeLimitReached();
+
 	/** Checks the base-driven win/lose conditions; ends the match if one is met. */
 	void EvaluateBaseConditions();
 
 	/** Finds the player hero and binds its death delegate (retried until the hero exists). */
 	void TryBindToHero();
+
+	/** Locates the level's AAshMatchRulesActor (if any) and caches its config. */
+	void ResolveRules();
+
+	/** Binds OnGeneralDied for every enemy general in the level and counts the living ones. */
+	void BindToEnemyGenerals();
+
+	// Rule accessors: read the resolved config, falling back to the Phase 16 defaults when no
+	// rules asset is present so existing levels behave unchanged.
+	bool Rule_VictoryWhenAllBasesCaptured() const;
+	bool Rule_VictoryWhenEnemyGeneralsEliminated() const;
+	bool Rule_DefeatWhenHeroDies() const;
+	bool Rule_DefeatWhenMainBaseLost() const;
 
 	/** Sets the state, broadcasting OnMatchStateChanged on a real change. */
 	void SetMatchState(EAshMatchState NewState);
@@ -128,6 +157,17 @@ private:
 	UPROPERTY(Transient)
 	TWeakObjectPtr<AAshHeroCharacter> BoundHero;
 
+	/** Resolved win/lose rules for this level (null = use the built-in Phase 16 defaults). */
+	UPROPERTY(Transient)
+	TObjectPtr<const UAshMatchRulesConfig> Rules;
+
+	/** Enemy generals we bound a death handler to (for the eliminate-generals victory). */
+	UPROPERTY(Transient)
+	TArray<TWeakObjectPtr<AAshEnemyGeneralCharacter>> BoundGenerals;
+
+	/** Living enemy-general count; the eliminate-generals victory fires when it hits zero. */
+	int32 RemainingEnemyGenerals = 0;
+
 	/** World time StartMatch() ran. */
 	float MatchStartTime = 0.f;
 
@@ -136,6 +176,9 @@ private:
 
 	/** Retries TryBindToHero until the experience-spawned hero exists. */
 	FTimerHandle HeroBindTimerHandle;
+
+	/** Drives the optional match time limit. */
+	FTimerHandle TimeLimitTimerHandle;
 
 	/** True once bound to the base subsystem delegate. */
 	bool bBoundToBases = false;

@@ -105,6 +105,29 @@ struct FAshCombatFragment : public FMassFragment
 	float TimeSinceLastAttack = 0.f;
 };
 
+/**
+ * One-shot combat animation events surfaced from the combat layer to the representation
+ * layer (Phase 15). The combat processor sets bAttackedThisTick on an attacker when its
+ * strike lands and bWasHitThisTick on the victim; the representation processor consumes
+ * them to play the proxy's attack / hit-react montages, then clears both the same frame so
+ * each event animates exactly once. Kept separate from FAshCombatFragment so the combat
+ * processor can flag a *target* entity's event via the entity manager without taking write
+ * access to the whole combat fragment.
+ */
+USTRUCT()
+struct FAshCombatEventFragment : public FMassFragment
+{
+	GENERATED_BODY()
+
+	/** Set the tick this soldier landed an attack; drives the proxy attack montage. */
+	UPROPERTY()
+	bool bAttackedThisTick = false;
+
+	/** Set the tick this soldier took damage; drives the proxy hit-react montage. */
+	UPROPERTY()
+	bool bWasHitThisTick = false;
+};
+
 /** Squad membership and current order. Drives hierarchical AI (Phase 11). */
 USTRUCT()
 struct FAshSquadFragment : public FMassFragment

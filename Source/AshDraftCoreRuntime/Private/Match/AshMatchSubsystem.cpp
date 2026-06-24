@@ -4,10 +4,14 @@
 
 #include "Base/AshBaseActor.h"
 #include "Base/AshBaseSubsystem.h"
+#include "Character/AshEnemyGeneralCharacter.h"
 #include "Character/AshHeroCharacter.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
+#include "Match/AshMatchRulesActor.h"
+#include "Match/AshMatchRulesConfig.h"
 #include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogAshMatch, Log, All);
@@ -30,6 +34,9 @@ void UAshMatchSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
 
+	// Adopt the level's editor-authored win/lose conditions (or keep the defaults).
+	ResolveRules();
+
 	// React to base flips instead of polling (ARCHITECTURE.md 18.3).
 	if (UAshBaseSubsystem* BaseSubsystem = InWorld.GetSubsystem<UAshBaseSubsystem>())
 	{
@@ -40,6 +47,9 @@ void UAshMatchSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	// Bind to the hero's death event; if the experience hasn't spawned it yet, retry on a timer.
 	TryBindToHero();
 
+	// Bind enemy generals for the eliminate-generals victory (counts the living ones).
+	BindToEnemyGenerals();
+
 	// All actors have finished BeginPlay, so bases are registered: begin the match.
 	StartMatch();
 }
@@ -49,6 +59,7 @@ void UAshMatchSubsystem::Deinitialize()
 	if (const UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(HeroBindTimerHandle);
+		World->GetTimerManager().ClearTimer(TimeLimitTimerHandle);
 
 		if (bBoundToBases)
 		{
@@ -66,6 +77,15 @@ void UAshMatchSubsystem::Deinitialize()
 	}
 	BoundHero = nullptr;
 
+	for (const TWeakObjectPtr<AAshEnemyGeneralCharacter>& General : BoundGenerals)
+	{
+		if (AAshEnemyGeneralCharacter* Live = General.Get())
+		{
+			Live->OnGeneralDied.RemoveDynamic(this, &UAshMatchSubsystem::HandleGeneralDied);
+		}
+	}
+	BoundGenerals.Reset();
+
 	Super::Deinitialize();
 }
 
@@ -82,6 +102,18 @@ void UAshMatchSubsystem::StartMatch()
 	SetMatchState(EAshMatchState::InProgress);
 	UE_LOG(LogAshMatch, Log, TEXT("Match started."));
 	OnMatchStarted.Broadcast();
+
+	// Start the optional time limit (Phase 15 rules). Outcome None / non-positive time = no timer.
+	if (Rules && Rules->TimeLimitOutcome != EAshTimeLimitOutcome::None && Rules->TimeLimitSeconds > 0.f)
+	{
+		if (UWorld* TimerWorld = GetWorld())
+		{
+			TimerWorld->GetTimerManager().SetTimer(TimeLimitTimerHandle, this,
+				&UAshMatchSubsystem::HandleTimeLimitReached, Rules->TimeLimitSeconds, false);
+			UE_LOG(LogAshMatch, Log, TEXT("Match time limit armed: %.1fs (outcome %d)."),
+				Rules->TimeLimitSeconds, static_cast<int32>(Rules->TimeLimitOutcome));
+		}
+	}
 
 	// A starting layout could already satisfy a base condition (e.g. a one-base test map).
 	EvaluateBaseConditions();
@@ -162,6 +194,13 @@ void UAshMatchSubsystem::EvaluateBaseConditions()
 		return;
 	}
 
+	const bool bCheckMainBaseLost = Rule_DefeatWhenMainBaseLost();
+	const bool bCheckAllBases = Rule_VictoryWhenAllBasesCaptured();
+	if (!bCheckMainBaseLost && !bCheckAllBases)
+	{
+		return; // No base-driven conditions are active under the current rules.
+	}
+
 	const TArray<AAshBaseActor*> Bases = BaseSubsystem->GetAllBases();
 	if (Bases.Num() == 0)
 	{
@@ -179,7 +218,7 @@ void UAshMatchSubsystem::EvaluateBaseConditions()
 		const EAshTeamId Owner = Base->GetOwningTeam();
 
 		// Defeat: a player-side main base has fallen to the enemy.
-		if (Base->IsMainBase() && Owner == EAshTeamId::Enemy)
+		if (bCheckMainBaseLost && Base->IsMainBase() && Owner == EAshTeamId::Enemy)
 		{
 			EndMatch(EAshMatchResult::Defeat, EAshMatchEndReason::MainBaseLost);
 			return;
@@ -192,7 +231,7 @@ void UAshMatchSubsystem::EvaluateBaseConditions()
 	}
 
 	// Victory: the player side owns every base.
-	if (bAllPlayerSide)
+	if (bCheckAllBases && bAllPlayerSide)
 	{
 		EndMatch(EAshMatchResult::Victory, EAshMatchEndReason::AllBasesCaptured);
 	}
@@ -233,5 +272,110 @@ void UAshMatchSubsystem::TryBindToHero()
 
 void UAshMatchSubsystem::HandleHeroDied(AAshHeroCharacter* /*Hero*/)
 {
+	if (!Rule_DefeatWhenHeroDies())
+	{
+		return;
+	}
 	EndMatch(EAshMatchResult::Defeat, EAshMatchEndReason::PlayerDeath);
+}
+
+void UAshMatchSubsystem::HandleGeneralDied(AAshEnemyGeneralCharacter* /*General*/)
+{
+	RemainingEnemyGenerals = FMath::Max(0, RemainingEnemyGenerals - 1);
+
+	if (Rule_VictoryWhenEnemyGeneralsEliminated() && RemainingEnemyGenerals == 0)
+	{
+		EndMatch(EAshMatchResult::Victory, EAshMatchEndReason::EnemyGeneralsEliminated);
+	}
+}
+
+void UAshMatchSubsystem::HandleTimeLimitReached()
+{
+	if (!Rules)
+	{
+		return;
+	}
+
+	switch (Rules->TimeLimitOutcome)
+	{
+	case EAshTimeLimitOutcome::Victory:
+		EndMatch(EAshMatchResult::Victory, EAshMatchEndReason::TimeLimitReached);
+		break;
+	case EAshTimeLimitOutcome::Defeat:
+		EndMatch(EAshMatchResult::Defeat, EAshMatchEndReason::TimeLimitReached);
+		break;
+	default:
+		break;
+	}
+}
+
+void UAshMatchSubsystem::ResolveRules()
+{
+	Rules = nullptr;
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// First rules actor wins; the level is expected to hold at most one.
+	for (TActorIterator<AAshMatchRulesActor> It(World); It; ++It)
+	{
+		if (const UAshMatchRulesConfig* Found = It->GetRules())
+		{
+			Rules = Found;
+			UE_LOG(LogAshMatch, Log, TEXT("Match rules adopted from '%s' (asset '%s')."),
+				*It->GetName(), *Found->GetName());
+			return;
+		}
+	}
+
+	UE_LOG(LogAshMatch, Log, TEXT("No match rules actor/asset found; using Phase 16 defaults."));
+}
+
+void UAshMatchSubsystem::BindToEnemyGenerals()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (TActorIterator<AAshEnemyGeneralCharacter> It(World); It; ++It)
+	{
+		AAshEnemyGeneralCharacter* General = *It;
+		if (!General || General->IsDead())
+		{
+			continue;
+		}
+
+		General->OnGeneralDied.AddDynamic(this, &UAshMatchSubsystem::HandleGeneralDied);
+		BoundGenerals.Add(General);
+		++RemainingEnemyGenerals;
+	}
+
+	UE_LOG(LogAshMatch, Verbose, TEXT("Bound to %d enemy general(s) for the eliminate-generals victory."),
+		RemainingEnemyGenerals);
+}
+
+bool UAshMatchSubsystem::Rule_VictoryWhenAllBasesCaptured() const
+{
+	return Rules ? Rules->bVictoryWhenAllBasesCaptured : true;
+}
+
+bool UAshMatchSubsystem::Rule_VictoryWhenEnemyGeneralsEliminated() const
+{
+	// Only meaningful when the level actually has generals to eliminate.
+	return Rules ? (Rules->bVictoryWhenEnemyGeneralsEliminated && BoundGenerals.Num() > 0) : false;
+}
+
+bool UAshMatchSubsystem::Rule_DefeatWhenHeroDies() const
+{
+	return Rules ? Rules->bDefeatWhenHeroDies : true;
+}
+
+bool UAshMatchSubsystem::Rule_DefeatWhenMainBaseLost() const
+{
+	return Rules ? Rules->bDefeatWhenMainBaseLost : true;
 }

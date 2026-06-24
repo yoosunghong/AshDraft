@@ -99,6 +99,7 @@ void UAshMassCombatProcessor::ConfigureQueries(const TSharedRef<FMassEntityManag
 	EntityQuery.AddRequirement<FAshTeamFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshHealthFragment>(EMassFragmentAccess::ReadWrite);
 	EntityQuery.AddRequirement<FAshCombatFragment>(EMassFragmentAccess::ReadWrite);
+	EntityQuery.AddRequirement<FAshCombatEventFragment>(EMassFragmentAccess::ReadWrite);
 	EntityQuery.AddRequirement<FAshLODFragment>(EMassFragmentAccess::ReadWrite);
 }
 
@@ -133,6 +134,7 @@ void UAshMassCombatProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 		const TConstArrayView<FAshTeamFragment> TeamList = ChunkContext.GetFragmentView<FAshTeamFragment>();
 		const TConstArrayView<FAshHealthFragment> HealthList = ChunkContext.GetFragmentView<FAshHealthFragment>();
 		const TArrayView<FAshCombatFragment> CombatList = ChunkContext.GetMutableFragmentView<FAshCombatFragment>();
+		const TArrayView<FAshCombatEventFragment> EventList = ChunkContext.GetMutableFragmentView<FAshCombatEventFragment>();
 		const TArrayView<FAshLODFragment> LODList = ChunkContext.GetMutableFragmentView<FAshLODFragment>();
 
 		for (FMassExecutionContext::FEntityIterator It = ChunkContext.CreateEntityIterator(); It; ++It)
@@ -177,6 +179,14 @@ void UAshMassCombatProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 				{
 					TargetHealth->CurrentHealth = FMath::Max(0.f, TargetHealth->CurrentHealth - Combat.AttackPower);
 					Combat.TimeSinceLastAttack = 0.f;
+
+					// Surface one-shot animation events for the representation layer (Phase 15):
+					// the attacker plays its attack montage, the victim its hit-react montage.
+					EventList[It].bAttackedThisTick = true;
+					if (FAshCombatEventFragment* TargetEvent = EntityManager.GetFragmentDataPtr<FAshCombatEventFragment>(Acquired))
+					{
+						TargetEvent->bWasHitThisTick = true;
+					}
 				}
 			}
 		}

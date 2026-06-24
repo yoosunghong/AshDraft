@@ -74,6 +74,7 @@ int32 AAshMassSoldierSpawner::SpawnSoldiers()
 		FAshHealthFragment::StaticStruct(),
 		FAshMovementFragment::StaticStruct(),
 		FAshCombatFragment::StaticStruct(),
+		FAshCombatEventFragment::StaticStruct(),
 		FAshSquadFragment::StaticStruct(),
 		FAshLODFragment::StaticStruct(),
 	};

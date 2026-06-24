@@ -61,5 +61,28 @@ enum class EAshMatchEndReason : uint8
 	PlayerDeath			= 2	UMETA(DisplayName = "Player Death"),
 
 	/** A player-side main base was captured by the enemy (Phase 16 defeat condition). */
-	MainBaseLost		= 3	UMETA(DisplayName = "Main Base Lost")
+	MainBaseLost		= 3	UMETA(DisplayName = "Main Base Lost"),
+
+	/** Every enemy general was eliminated (Phase 15 editor-configurable victory). */
+	EnemyGeneralsEliminated	= 4	UMETA(DisplayName = "Enemy Generals Eliminated"),
+
+	/** The match time limit elapsed (outcome chosen by the rules; Phase 15). */
+	TimeLimitReached	= 5	UMETA(DisplayName = "Time Limit Reached")
+};
+
+/**
+ * What happens when a match's optional time limit elapses (Phase 15 editor rules). Lets a
+ * designer model both "survive the clock to win" and "capture before time runs out or lose".
+ */
+UENUM(BlueprintType)
+enum class EAshTimeLimitOutcome : uint8
+{
+	/** No time limit; the timer is never started. */
+	None	= 0	UMETA(DisplayName = "No Time Limit"),
+
+	/** Surviving until the timer expires is a victory. */
+	Victory	= 1	UMETA(DisplayName = "Victory (survive the clock)"),
+
+	/** The timer expiring is a defeat. */
+	Defeat	= 2	UMETA(DisplayName = "Defeat (time out)")
 };

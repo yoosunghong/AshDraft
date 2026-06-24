@@ -17,9 +17,19 @@
 - [x] Phase 13: Actor Proxy / Hybrid Representation
 - [x] Phase 14: Flow Field Navigation PoC
 - [ ] Phase 15: Battlefield PoC Map
-  - EDITOR-ONLY phase (no codebase deliverable): authoring a level, placing bases/spawns/lanes.
-    The supporting code already exists (`AAshBaseActor` + `bIsMainBase`, `AAshMassSoldierSpawner`,
+  - EDITOR phase for the map itself (authoring a level, placing bases/spawns/lanes). The
+    supporting code already exists (`AAshBaseActor` + `bIsMainBase`, `AAshMassSoldierSpawner`,
     flow-field/commander subsystems). See `Docs/Guides/Phase15-19_Editor_Work_And_Verification.md` §15.
+  - Added (code): **Mass soldier skeletal meshes + animations** — `AAshSoldierProxyActor` is now a
+    `USkeletalMeshComponent` body with attack/hit montages; new `FAshCombatEventFragment` carries
+    one-shot attack/hit flags the combat processor sets and the representation processor plays on the
+    proxy. See `Done/DONE_mass_soldier_skeletal_anim.md`.
+  - Added (code): **editor-configurable victory/defeat** — `UAshMatchRulesConfig` + `AAshMatchRulesActor`
+    let designers toggle win/lose conditions (all bases captured, enemy generals eliminated, hero death,
+    main base lost) and a time limit per level; `UAshMatchSubsystem` consumes them (defaults preserve the
+    Phase 16 behavior). See `Done/DONE_editor_match_rules.md`.
+  - PENDING USER (editor + PIE): assign the proxy skeletal mesh/AnimBP/montages; create a `DA_MatchRules`
+    and place an `AshMatchRulesActor`; build (LyraEditor Win64) then PIE-verify animations + each condition.
 - [x] Phase 16: Victory, Defeat, and Match Flow
   - Complete (code): `UAshMatchSubsystem` (world state machine NotStarted→InProgress→Victory/Defeat;
     binds `UAshBaseSubsystem::OnAnyBaseOwnershipChanged` + hero `OnHeroDied`; victory = player side
