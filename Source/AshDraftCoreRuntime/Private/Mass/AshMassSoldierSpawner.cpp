@@ -6,7 +6,9 @@
 #include "AI/AshSquadSubsystem.h"
 #include "Engine/World.h"
 #include "Mass/AshMassSoldierConfig.h"
+#include "Mass/AshSoldierBehaviorConfig.h"
 #include "Mass/AshSoldierFragments.h"
+#include "Mass/AshSoldierVisualConfig.h"
 #include "MassEntityManager.h"
 #include "MassEntitySubsystem.h"
 
@@ -75,6 +77,9 @@ int32 AAshMassSoldierSpawner::SpawnSoldiers()
 		FAshMovementFragment::StaticStruct(),
 		FAshCombatFragment::StaticStruct(),
 		FAshCombatEventFragment::StaticStruct(),
+		FAshVisualFragment::StaticStruct(),
+		FAshBehaviorFragment::StaticStruct(),
+		FAshSoldierStateFragment::StaticStruct(),
 		FAshSquadFragment::StaticStruct(),
 		FAshLODFragment::StaticStruct(),
 	};
@@ -86,6 +91,11 @@ int32 AAshMassSoldierSpawner::SpawnSoldiers()
 	const float AttackRange   = Config ? Config->AttackRange   : FallbackAttackRange;
 	const float AttackPower   = Config ? Config->AttackPower   : FallbackAttackPower;
 	const float AttackCooldown= Config ? Config->AttackCooldown: FallbackAttackCooldown;
+
+	// Visual set comes from the unit-type config (null when unassigned -> proxy stays bare).
+	UAshSoldierVisualConfig* VisualConfig = Config ? Config->Visual : nullptr;
+	// Behavior set drives the local-AI / movement / ground tunables (null -> processor fallbacks).
+	UAshSoldierBehaviorConfig* BehaviorConfig = Config ? Config->Behavior : nullptr;
 
 	const FVector Origin = GetActorLocation();
 	int32 NumCreated = 0;
@@ -119,6 +129,11 @@ int32 AAshMassSoldierSpawner::SpawnSoldiers()
 		Combat.AttackPower = AttackPower;
 		Combat.AttackCooldown = AttackCooldown;
 		Combat.TimeSinceLastAttack = AttackCooldown; // ready to attack immediately
+
+		EntityManager.GetFragmentDataChecked<FAshVisualFragment>(Entity).Visual = VisualConfig;
+		EntityManager.GetFragmentDataChecked<FAshBehaviorFragment>(Entity).Behavior = BehaviorConfig;
+
+		// FAshSoldierStateFragment keeps its default (FollowSquad); the behavior processor owns it.
 
 		FAshSquadFragment& Squad = EntityManager.GetFragmentDataChecked<FAshSquadFragment>(Entity);
 		Squad.SquadId = SquadId;

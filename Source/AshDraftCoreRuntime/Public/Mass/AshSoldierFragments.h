@@ -4,8 +4,12 @@
 
 #include "MassEntityTypes.h"
 #include "Mass/EntityHandle.h"
+#include "Mass/ExternalSubsystemTraits.h" // TMassFragmentTraits (trivially-copyable opt-out)
 #include "Teams/AshTeamTypes.h"
 #include "AshSoldierFragments.generated.h"
+
+class UAshSoldierVisualConfig;
+class UAshSoldierBehaviorConfig;
 
 /**
  * AshSoldierFragments.h
@@ -72,6 +76,59 @@ struct FAshMovementFragment : public FMassFragment
 	/** Max ground speed (cm/s). Maps to UAshSoldierConfig::MoveSpeed. */
 	UPROPERTY()
 	float MoveSpeed = 0.f;
+
+	/**
+	 * Mass-authoritative body yaw (degrees). The movement processor interpolates this toward a
+	 * target-aware desired heading each frame (face the combat target while engaging/attacking,
+	 * else face travel); the representation proxy reads it to orient the mesh. Decoupling facing
+	 * from raw velocity is what lets a stopped, attacking soldier still face its enemy (Phase 20).
+	 */
+	UPROPERTY()
+	float FacingYaw = 0.f;
+};
+
+/**
+ * Local behavior state for a single soldier (Phase 20). This is the soldier's "state tree": a
+ * compact, data-oriented FSM evaluated by UAshMassSoldierBehaviorProcessor over packed fragments
+ * (the AAA-scale alternative to a per-entity Unreal StateTree, which stays reserved for the few
+ * complex General/Squad agents — PROPOSAL.md 15.2/15.3/15.5). Soldiers only act locally: they
+ * follow their squad/general objective and engage enemies sensed within a small radius.
+ */
+UENUM()
+enum class EAshSoldierState : uint8
+{
+	/** No local enemy: advance on the squad's shared objective (the general's command). */
+	FollowSquad,
+
+	/** A local enemy is sensed but out of reach: close the distance, facing it. */
+	Engage,
+
+	/** A local enemy is within attack range: hold position (anchored) and strike on cooldown. */
+	Attack,
+};
+
+/** Current FSM state, written by the behavior processor and read by movement/combat (Phase 20). */
+USTRUCT()
+struct FAshSoldierStateFragment : public FMassFragment
+{
+	GENERATED_BODY()
+
+	/** The soldier's current local behavior state. */
+	UPROPERTY()
+	EAshSoldierState State = EAshSoldierState::FollowSquad;
+
+	/**
+	 * World position where the soldier began its current engagement. The chase leash
+	 * (UAshSoldierBehaviorConfig::MaxLeashFromObjective) is measured from here, so a soldier engages
+	 * any enemy that crosses its path during the march yet never wanders far chasing one — it returns
+	 * to the flow field once it strays past the leash or the enemy dies (Phase 20.1).
+	 */
+	UPROPERTY()
+	FVector EngageAnchor = FVector::ZeroVector;
+
+	/** True once EngageAnchor is set for the current engagement; cleared on returning to FollowSquad. */
+	UPROPERTY()
+	bool bEngaged = false;
 };
 
 /** Combat state and tunables. Maps to UAshSoldierConfig attack fields. */
@@ -126,6 +183,70 @@ struct FAshCombatEventFragment : public FMassFragment
 	/** Set the tick this soldier took damage; drives the proxy hit-react montage. */
 	UPROPERTY()
 	bool bWasHitThisTick = false;
+};
+
+/**
+ * Per-entity link to its unit type's visual set (Phase 15). Seeded by the spawner from
+ * UAshMassSoldierConfig::Visual; read by the representation processor to dress the proxy
+ * (skeletal mesh, AnimBP, montages) at runtime. The pointer is identical across every entity
+ * of one unit type — a Mass *shared* fragment would dedupe it; a plain ObjectPtr fragment is
+ * used here for symmetry with the other FAsh* fragments and because the per-entity cost (one
+ * pointer) is negligible at PoC scale.
+ */
+USTRUCT()
+struct FAshVisualFragment : public FMassFragment
+{
+	GENERATED_BODY()
+
+	/** Visual/animation set for this entity's unit type (null = render nothing / Blueprint default). */
+	UPROPERTY()
+	TObjectPtr<UAshSoldierVisualConfig> Visual = nullptr;
+};
+
+/**
+ * Mass forbids non-trivially-copyable fragments because it relocates fragment memory with raw
+ * memcpy/memmove. In editor builds TObjectPtr carries access-tracking machinery that makes it
+ * non-trivially-copyable, even though it is pointer-sized and bit-relocatable (and its referenced
+ * UObject stays GC-reachable via the UPROPERTY). We therefore opt out explicitly, mirroring the
+ * engine's own TObjectPtr-bearing fragments (see MassEngineMeshFragments.h). The pointer is identical
+ * across every entity of a unit type, so a shared fragment would be the dedup-optimal choice; that is
+ * deferred per the design note on FAshVisualFragment.
+ */
+template<>
+struct TMassFragmentTraits<FAshVisualFragment> final
+{
+	enum
+	{
+		AuthorAcceptsItsNotTriviallyCopyable = true
+	};
+};
+
+/**
+ * Per-entity link to its unit type's behavior set (Phase 20). Seeded by the spawner from
+ * UAshMassSoldierConfig::Behavior; read by the behavior, movement and ground processors for their
+ * data-driven tunables (sense radius, leash, facing turn rate, separation, ground conform). Like
+ * FAshVisualFragment, the pointer is identical across every entity of one unit type; a shared
+ * fragment would dedupe it, but a plain ObjectPtr fragment keeps symmetry with the other FAsh*
+ * fragments at negligible per-entity cost. Null is tolerated: processors fall back to defaults.
+ */
+USTRUCT()
+struct FAshBehaviorFragment : public FMassFragment
+{
+	GENERATED_BODY()
+
+	/** Behavior/tuning set for this entity's unit type (null = processor fallbacks). */
+	UPROPERTY()
+	TObjectPtr<const UAshSoldierBehaviorConfig> Behavior = nullptr;
+};
+
+/** TObjectPtr opt-out, identical rationale to FAshVisualFragment's (Mass memcpy-relocates fragments). */
+template<>
+struct TMassFragmentTraits<FAshBehaviorFragment> final
+{
+	enum
+	{
+		AuthorAcceptsItsNotTriviallyCopyable = true
+	};
 };
 
 /** Squad membership and current order. Drives hierarchical AI (Phase 11). */

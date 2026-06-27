@@ -27,6 +27,7 @@ void UAshMassRepresentationProcessor::ConfigureQueries(const TSharedRef<FMassEnt
 	EntityQuery.AddRequirement<FAshTeamFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshHealthFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshCombatEventFragment>(EMassFragmentAccess::ReadWrite);
+	EntityQuery.AddRequirement<FAshVisualFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshLODFragment>(EMassFragmentAccess::ReadOnly);
 }
 
@@ -48,6 +49,7 @@ void UAshMassRepresentationProcessor::Execute(FMassEntityManager& EntityManager,
 		const TConstArrayView<FAshTeamFragment> TeamList = ChunkContext.GetFragmentView<FAshTeamFragment>();
 		const TConstArrayView<FAshHealthFragment> HealthList = ChunkContext.GetFragmentView<FAshHealthFragment>();
 		const TArrayView<FAshCombatEventFragment> EventList = ChunkContext.GetMutableFragmentView<FAshCombatEventFragment>();
+		const TConstArrayView<FAshVisualFragment> VisualList = ChunkContext.GetFragmentView<FAshVisualFragment>();
 		const TConstArrayView<FAshLODFragment> LODList = ChunkContext.GetFragmentView<FAshLODFragment>();
 
 		for (FMassExecutionContext::FEntityIterator It = ChunkContext.CreateEntityIterator(); It; ++It)
@@ -61,9 +63,12 @@ void UAshMassRepresentationProcessor::Execute(FMassEntityManager& EntityManager,
 				// Promotion: ensure a proxy exists (subject to the cap) and mirror Mass onto it.
 				if (AAshSoldierProxyActor* Proxy = Pool->AcquireProxy(Entity, TeamList[It].TeamId))
 				{
+					// Dress the (generic, pooled) proxy for this entity's unit type, then mirror state.
+					Proxy->ConfigureVisual(VisualList[It].Visual);
+
 					const float MaxHealth = FMath::Max(1.f, HealthList[It].MaxHealth);
-					Proxy->SyncFromEntity(MovementList[It].Position, MovementList[It].Velocity,
-						HealthList[It].CurrentHealth / MaxHealth);
+					Proxy->SyncFromEntity(MovementList[It].Position, MovementList[It].FacingYaw,
+						MovementList[It].Velocity, HealthList[It].CurrentHealth / MaxHealth);
 
 					// Play this frame's combat events on the visible body (Phase 15).
 					if (EventList[It].bAttackedThisTick)

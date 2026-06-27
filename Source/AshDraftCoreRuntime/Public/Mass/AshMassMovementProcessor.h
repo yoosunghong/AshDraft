@@ -68,6 +68,50 @@ protected:
 	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|Debug")
 	bool bDrawFlowFieldDebug = false;
 
+	/**
+	 * Personal-space radius (cm) used for inter-soldier avoidance. Neighbours closer than this push
+	 * a soldier away so the army spreads out instead of stacking on one point. ~ the soldier's body
+	 * diameter. Set to 0 to disable avoidance entirely.
+	 */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|Avoidance", meta = (ClampMin = "0.0"))
+	float SeparationRadius = 90.f;
+
+	/**
+	 * Strength of the avoidance push relative to MoveSpeed. 1.0 lets crowding fully cancel forward
+	 * speed at the radius; lower values keep soldiers pressing toward the objective while still
+	 * spreading. The combined steer+separation velocity is clamped to MoveSpeed.
+	 */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|Avoidance", meta = (ClampMin = "0.0"))
+	float SeparationStrength = 0.6f;
+
+	/**
+	 * Fallback per-frame relaxation factor (0..1) for soldiers without a behavior config. < 1 makes a
+	 * crowd settle into stable spacing instead of oscillating (the cure for the "5+ shake" jitter).
+	 */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|Avoidance", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float SeparationRelaxation = 0.5f;
+
+	/** Fallback cap on a single neighbour's push so two stacked soldiers can't fling each other. */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|Avoidance", meta = (ClampMin = "0.0"))
+	float MaxPushPerNeighbor = 1.f;
+
+	/** Fallback resistance (0..1) an attacking soldier has to being pushed; holds the line in melee. */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|Avoidance", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float CombatAnchorResistance = 0.85f;
+
+	/** Fallback body turn rate (deg/s) for target-aware interpolated facing. */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|Facing", meta = (ClampMin = "0.0"))
+	float FacingTurnRateDegPerSec = 720.f;
+
+	/**
+	 * Fallback ease-in distance (cm) to a group objective for soldiers without a behavior config.
+	 * Within this range the steer speed scales with the remaining distance so soldiers settle onto a
+	 * shared objective instead of ramming it at full speed and rebounding (the crowd-shake cure). 0
+	 * disables the ease-in.
+	 */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|Avoidance", meta = (ClampMin = "0.0"))
+	float ArrivalSlowdownRadius = 250.f;
+
 private:
 	FMassEntityQuery EntityQuery;
 };

@@ -4,12 +4,15 @@
 
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "AbilitySystem/AshAttributeSet.h"
 #include "AbilitySystem/AshGameplayEffect_Damage.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "AshGameplayTags.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "Mass/AshSoldierProxyActor.h"
+#include "Teams/AshTeamStatics.h"
 
 UAshGA_BasicAttack::UAshGA_BasicAttack(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -220,11 +223,35 @@ void UAshGA_BasicAttack::PerformHitSweep()
 		return;
 	}
 
-	// Apply once per distinct hit target that owns an ability system.
+	// For Mass soldiers (no ability system, health lives in a Mass fragment) we can't run the GE
+	// pipeline, so reuse the attacker's AttackPower as the flat damage — the same source magnitude
+	// UAshDamageExecution consumes — clamped to the execution's MinDamage so a hit always lands.
+	const EAshTeamId AttackerTeam = UAshTeamStatics::GetActorTeam(Avatar);
+	const float SoldierDamage = FMath::Max(SourceASC->GetNumericAttribute(UAshAttributeSet::GetAttackPowerAttribute()), 1.f);
+
+	// Apply once per distinct hit target. Heroes/generals go through GAS; Mass soldier proxies take
+	// direct Mass damage (team-checked so the player never cuts down its own army).
 	TSet<UAbilitySystemComponent*> HitTargets;
+	TSet<AActor*> HitProxies;
 	for (const FHitResult& Hit : Hits)
 	{
 		AActor* HitActor = Hit.GetActor();
+		if (!HitActor)
+		{
+			continue;
+		}
+
+		if (AAshSoldierProxyActor* Proxy = Cast<AAshSoldierProxyActor>(HitActor))
+		{
+			bool bAlreadyHit = false;
+			HitProxies.Add(Proxy, &bAlreadyHit);
+			if (!bAlreadyHit && UAshTeamStatics::AreTeamsHostile(AttackerTeam, Proxy->GetRepresentedTeam()))
+			{
+				Proxy->ReceiveMeleeHit(SoldierDamage, Avatar);
+			}
+			continue;
+		}
+
 		UAbilitySystemComponent* TargetASC = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(HitActor);
 		if (!TargetASC || TargetASC == SourceASC || HitTargets.Contains(TargetASC))
 		{

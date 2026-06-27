@@ -15,22 +15,27 @@ Goal: Build the first actual test battlefield.
 - [ ] Verify basic match flow
 - [ ] Create `Done/DONE_battlefield_poc_map.md`
 
-## Added work: Mass soldier skeletal meshes + animations
+## Added work: Mass soldier skeletal meshes + animations (data-driven unit types)
 
 Goal: rendered Mass soldiers are real skeletal-mesh characters that animate, not debug
-points/static meshes. The LOD-0 proxy actor (`AAshSoldierProxyActor`) is the visible body;
-combat events are surfaced from the Mass combat processor to the proxy so it can react.
+points/static meshes — and a unit's whole look is data-driven so multiple unit types are
+authored as data, not Blueprints/code. `B_Soldier_Proxy` is one generic empty template; its
+mesh/AnimBP/montages come from a `UAshSoldierVisualConfig` applied at runtime. Combat events
+are surfaced from the Mass combat processor to the proxy so it can react.
 
-- [x] Convert `AAshSoldierProxyActor` to a `USkeletalMeshComponent` body (mesh + AnimBP set
-      data-driven in a Blueprint subclass) and orient it to its movement direction
-- [x] Add proxy `AttackMontage` / `HitReactMontage` (EditDefaultsOnly, set in the BP) + play API
-- [x] Add `FAshCombatEventFragment` (one-shot attack/hit flags) to the soldier archetype
+- [x] `UAshSoldierVisualConfig` data asset (skeletal mesh, AnimBP, mesh transform, attack/hit montages)
+- [x] `UAshMassSoldierConfig` becomes the unit-type asset: stats + a `Visual` reference
+- [x] `AAshSoldierProxyActor` → `USkeletalMeshComponent`; `ConfigureVisual()` dresses it at runtime
+      (idempotent), orient to movement; montages read from the current visual set
+- [x] `FAshVisualFragment` (per-entity visual-set link) + `FAshCombatEventFragment` (one-shot
+      attack/hit flags) added to the soldier archetype and seeded by the spawner
 - [x] Combat processor sets the attacker's attack flag and the victim's hit flag when a strike lands
-- [x] Representation processor consumes the flags → plays attack / hit montages on the proxy,
-      then clears them each frame (runs after the combat processor)
+- [x] Representation processor configures the proxy's visual, plays attack/hit montages, then clears
+      the flags each frame (runs after the combat processor)
 - [x] Create `Done/DONE_mass_soldier_skeletal_anim.md`
-- [ ] EDITOR (user): make `BP_AshSoldierProxy` (or set the proxy class), assign skeletal mesh,
-      AnimBP, attack & hit montages; PIE-verify attack/hit animations on engaged soldiers
+- [ ] EDITOR (user): keep `B_Soldier_Proxy`'s mesh component empty; author `DA_<Unit>_Visual`,
+      reference it from `DA_MassSoldierConfig.Visual`; PIE-verify attack/hit animations. Duplicate
+      the assets for additional unit types reusing the same proxy class.
 
 ## Added work: editor-configurable victory / defeat conditions
 

@@ -5,18 +5,25 @@
 #include "Engine/DataAsset.h"
 #include "AshMassSoldierConfig.generated.h"
 
+class UAshSoldierVisualConfig;
+class UAshSoldierBehaviorConfig;
+
 /**
  * UAshMassSoldierConfig
  *
- * Data-driven archetype tunables for Mass Entity soldiers (ARCHITECTURE.md 17 / 7.4).
- * This is the Mass-side counterpart to the Phase 8 UAshSoldierConfig: the same kind of
- * health / movement / combat numbers, but stripped of Actor-only fields (no think
- * interval, no nav acceptance) because a Mass soldier has no per-unit Actor or timer.
+ * The data-driven definition of one Mass soldier *unit type* (ARCHITECTURE.md 17 / 7.4): its
+ * gameplay tunables (health / movement / combat) plus a reference to the visual set used to
+ * render it. It is the Mass-side counterpart to the Phase 8 UAshSoldierConfig, stripped of
+ * Actor-only fields (no think interval, no nav acceptance) because a Mass soldier has no
+ * per-unit Actor or timer.
  *
- * The spawner (AAshMassSoldierSpawner) seeds each entity's FAshHealthFragment /
- * FAshMovementFragment / FAshCombatFragment from these values, so a whole army can be
- * tuned without recompiling. The spawner falls back to inline defaults when no config
- * is assigned.
+ * A spawner (AAshMassSoldierSpawner) points at one of these; it seeds each entity's
+ * FAshHealthFragment / FAshMovementFragment / FAshCombatFragment from the stats and stamps the
+ * Visual onto FAshVisualFragment, so a whole army — or a whole new unit type — is authored as
+ * data without recompiling. The spawner falls back to inline defaults when no config is assigned.
+ *
+ * Adding a unit type (infantry / archer / cavalry) = a new asset of this class with its own stats
+ * and a Visual reference; no Blueprint or code changes.
  */
 UCLASS(BlueprintType)
 class ASHDRAFTCORERUNTIME_API UAshMassSoldierConfig : public UDataAsset
@@ -24,6 +31,18 @@ class ASHDRAFTCORERUNTIME_API UAshMassSoldierConfig : public UDataAsset
 	GENERATED_BODY()
 
 public:
+	/** Visual + animation set for this unit type. Drives the representation proxy's mesh/anim. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|MassSoldier|Visual")
+	TObjectPtr<UAshSoldierVisualConfig> Visual;
+
+	/**
+	 * Local-AI behavior set for this unit type (Phase 20): sensing radius, leash, facing turn rate,
+	 * separation tuning, ground conform. Drives the behavior / movement / ground processors. Null is
+	 * tolerated — the processors fall back to built-in defaults.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|MassSoldier|Behavior")
+	TObjectPtr<UAshSoldierBehaviorConfig> Behavior;
+
 	/** Full (and initial) health. Seeds FAshHealthFragment. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|MassSoldier|Health", meta = (ClampMin = "1.0"))
 	float MaxHealth = 50.f;
