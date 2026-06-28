@@ -102,6 +102,7 @@ void UAshMassSoldierBehaviorProcessor::ConfigureQueries(const TSharedRef<FMassEn
 	EntityQuery.AddRequirement<FAshTeamFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshHealthFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshCombatFragment>(EMassFragmentAccess::ReadWrite);
+	EntityQuery.AddRequirement<FAshCombatTargetFragment>(EMassFragmentAccess::ReadWrite);
 	EntityQuery.AddRequirement<FAshSoldierStateFragment>(EMassFragmentAccess::ReadWrite);
 	EntityQuery.AddRequirement<FAshBehaviorFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshLODFragment>(EMassFragmentAccess::ReadWrite);
@@ -160,6 +161,7 @@ void UAshMassSoldierBehaviorProcessor::Execute(FMassEntityManager& EntityManager
 		const TConstArrayView<FAshHealthFragment> HealthList = ChunkContext.GetFragmentView<FAshHealthFragment>();
 		const TConstArrayView<FAshBehaviorFragment> BehaviorList = ChunkContext.GetFragmentView<FAshBehaviorFragment>();
 		const TArrayView<FAshCombatFragment> CombatList = ChunkContext.GetMutableFragmentView<FAshCombatFragment>();
+		const TArrayView<FAshCombatTargetFragment> CombatTargetList = ChunkContext.GetMutableFragmentView<FAshCombatTargetFragment>();
 		const TArrayView<FAshSoldierStateFragment> StateList = ChunkContext.GetMutableFragmentView<FAshSoldierStateFragment>();
 		const TArrayView<FAshLODFragment> LODList = ChunkContext.GetMutableFragmentView<FAshLODFragment>();
 
@@ -191,7 +193,43 @@ void UAshMassSoldierBehaviorProcessor::Execute(FMassEntityManager& EntityManager
 			const float MaxChase = Cfg ? Cfg->MaxLeashFromObjective : 1200.f;
 
 			FAshCombatFragment& Combat = CombatList[It];
+			FAshCombatTargetFragment& CombatTarget = CombatTargetList[It];
 			FAshSoldierStateFragment& StateFrag = StateList[It];
+
+			if (CombatTarget.TargetType == EAshCombatTargetType::Actor && CombatTarget.ActorTarget)
+			{
+				const float DistSq = FVector::DistSquared2D(SelfPos, CombatTarget.ActorTarget->GetActorLocation());
+				if (!StateFrag.bEngaged)
+				{
+					StateFrag.EngageAnchor = SelfPos;
+					StateFrag.bEngaged = true;
+				}
+				StateFrag.State = (DistSq <= FMath::Square(Combat.AttackRange))
+					? EAshSoldierState::Attack
+					: EAshSoldierState::Engage;
+				Combat.Target.Reset();
+				continue;
+			}
+
+			if (CombatTarget.TargetType == EAshCombatTargetType::MassEntity
+				&& CombatTarget.MassTarget.IsSet()
+				&& EntityManager.IsEntityValid(CombatTarget.MassTarget))
+			{
+				if (const FAshMovementFragment* TargetMovement = EntityManager.GetFragmentDataPtr<FAshMovementFragment>(CombatTarget.MassTarget))
+				{
+					const float DistSq = FVector::DistSquared2D(SelfPos, TargetMovement->Position);
+					if (!StateFrag.bEngaged)
+					{
+						StateFrag.EngageAnchor = SelfPos;
+						StateFrag.bEngaged = true;
+					}
+					StateFrag.State = (DistSq <= FMath::Square(Combat.AttackRange))
+						? EAshSoldierState::Attack
+						: EAshSoldierState::Engage;
+					Combat.Target = CombatTarget.MassTarget;
+					continue;
+				}
+			}
 
 			// Sense the nearest hostile within the soldier's *local* radius. Deliberately small: a
 			// soldier reacts only to enemies that cross its own path, never a map-wide search. An enemy

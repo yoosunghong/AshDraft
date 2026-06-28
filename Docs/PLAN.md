@@ -105,6 +105,36 @@
   - PENDING USER (editor + PIE): author `DA_<Unit>_Behavior`, link from `DA_MassSoldierConfig.Behavior`,
     set per-mesh `MeshRelativeLocation.Z`; build then PIE-verify burial / facing / no-shake.
     See `Done/DONE_mass_soldier_local_ai.md` + `Docs/Guides/Phase20_MassSoldier_Behavior_Setup_Guide.md`.
+- [ ] Phase 22: General StateTree System (operational AI layer)
+  - Partial (code complete; editor authoring + PIE pending). Adds the missing operational layer between
+    the commander and the soldiers: **AAshGeneralCharacter** — a high-fidelity, team-agnostic Character
+    (not Mass) driven by an Unreal **StateTree** (via **AAshGeneralController** + `UStateTreeAIComponent`).
+    Unifies/replaces the Phase 5 BT enemy general (same GAS foundation + event-driven death).
+  - Control flow: Commander (strategic, which base) → General (StateTree, operational) → squad objective
+    (= the general's live position, with a data-driven `FormationRadius`) → Mass soldiers (existing
+    follow/engage/return). The general **spawns its own squad** of `UAshGeneralConfig::TroopCount`
+    soldiers on BeginPlay via the new shared `AshMassSoldierSpawn::SpawnSoldiers` library (the Phase 9
+    spawner was refactored onto the same path).
+  - Sub-objective preemption (the brief): StateTree siblings ordered AttackTarget > AssaultStronghold >
+    ExecuteOrder, each gated by a `HasThreat` condition; the lower-priority tasks self-yield when a
+    higher-priority premise appears, so an enemy encountered en route or a stronghold in the path
+    temporarily preempts the commander order and the general resumes it afterward. Threat sensing lives
+    on the general, throttled by its think-rate.
+  - **AI-LOD = actor-level** (answer to the design question): generals are Characters, so
+    `UAshGeneralSubsystem` (a registry + the commander seam) throttles each general's StateTree
+    think-rate by distance to the player from a single timer (no per-general Tick), reusing the LOD ring
+    idea. `FAshSquadState.FormationRadius` makes the troops ring a stationary general.
+  - New: `UAshGeneralConfig`, `UAshGeneralSubsystem`, `AAshGeneralCharacter`, `AAshGeneralController`,
+    `FAshSTTask_ExecuteOrder/AttackTarget/AssaultStronghold` + `FAshSTCondition_HasThreat`,
+    `AshMassSoldierSpawnLibrary`. Modified: commander (assign to generals, skip general-owned squads),
+    squad subsystem/types (`FormationRadius`), movement processor (ring arrival), Build.cs (StateTree
+    modules), gameplay tags.
+  - PENDING USER (editor + PIE): build with the **editor closed** (new structs/UPROPERTYs — not
+    Live-Coding-safe); author `ST_AshGeneral` (AI schema) + `DA_General_*`; re-parent the enemy general
+    BP to `AAshGeneralCharacter` with `AAshGeneralController`; place generals; PIE-verify follow/
+    formation, sub-objective preempt+resume, and LOD think-rate falloff. See
+    `Done/DONE_general_statetree_system.md` + `Docs/Guides/Phase22_General_StateTree_Setup_Guide.md`.
+
 - [ ] Phase 20.1: Engage-on-contact + distributed deployment (follow-up to two field reports)
   - **Combat on contact while marching** — the leash was measured from the squad's *final* objective,
     so an army marching toward a distant objective via flow field had every soldier beyond the leash

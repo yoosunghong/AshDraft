@@ -6,6 +6,8 @@
 #include "Base/AshBaseActor.h"
 #include "Base/AshBaseSubsystem.h"
 #include "Engine/World.h"
+#include "GameFramework/Pawn.h"
+#include "Kismet/GameplayStatics.h"
 #include "Mass/AshFlowFieldSubsystem.h"
 #include "Mass/AshSoldierBehaviorConfig.h"
 #include "Mass/AshSoldierFragments.h"
@@ -60,7 +62,11 @@ UAshMassMovementProcessor::UAshMassMovementProcessor()
 void UAshMassMovementProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& EntityManager)
 {
 	EntityQuery.AddRequirement<FAshMovementFragment>(EMassFragmentAccess::ReadWrite);
+	EntityQuery.AddRequirement<FAshPlayerDisplacementFragment>(EMassFragmentAccess::ReadWrite);
+	EntityQuery.AddRequirement<FAshFormationFragment>(EMassFragmentAccess::ReadOnly);
+	EntityQuery.AddRequirement<FAshHealthFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshCombatFragment>(EMassFragmentAccess::ReadOnly);
+	EntityQuery.AddRequirement<FAshCombatTargetFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshSquadFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshTeamFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshSoldierStateFragment>(EMassFragmentAccess::ReadOnly);
@@ -75,6 +81,12 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 	UAshFlowFieldSubsystem* FlowField = (GroupNavMode == EAshGroupNavMode::FlowField && World)
 		? World->GetSubsystem<UAshFlowFieldSubsystem>() : nullptr;
 	const float ArrivalToleranceSq = ArrivalTolerance * ArrivalTolerance;
+	const APawn* PlayerPawn = World ? UGameplayStatics::GetPlayerPawn(World, 0) : nullptr;
+	const FVector PlayerLocation = PlayerPawn ? PlayerPawn->GetActorLocation() : FVector::ZeroVector;
+	FVector PlayerVelocity = PlayerPawn ? PlayerPawn->GetVelocity() : FVector::ZeroVector;
+	PlayerVelocity.Z = 0.f;
+	const bool bPlayerCanPush = PlayerPawn && PlayerPushRadius > 0.f && PlayerPushSpeed > 0.f
+		&& PlayerVelocity.SizeSquared2D() > FMath::Square(10.f);
 
 	// Per-unit-type tunable resolvers: use the entity's behavior config when present, else this
 	// processor's fallbacks (so a soldier with no config still behaves sensibly).
@@ -126,7 +138,11 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 	EntityQuery.ForEachEntityChunk(Context, [&](FMassExecutionContext& ChunkContext)
 	{
 		const TArrayView<FAshMovementFragment> MovementList = ChunkContext.GetMutableFragmentView<FAshMovementFragment>();
+		const TArrayView<FAshPlayerDisplacementFragment> DisplacementList = ChunkContext.GetMutableFragmentView<FAshPlayerDisplacementFragment>();
+		const TConstArrayView<FAshFormationFragment> FormationList = ChunkContext.GetFragmentView<FAshFormationFragment>();
+		const TConstArrayView<FAshHealthFragment> HealthList = ChunkContext.GetFragmentView<FAshHealthFragment>();
 		const TConstArrayView<FAshCombatFragment> CombatList = ChunkContext.GetFragmentView<FAshCombatFragment>();
+		const TConstArrayView<FAshCombatTargetFragment> CombatTargetList = ChunkContext.GetFragmentView<FAshCombatTargetFragment>();
 		const TConstArrayView<FAshSquadFragment> SquadList = ChunkContext.GetFragmentView<FAshSquadFragment>();
 		const TConstArrayView<FAshTeamFragment> TeamList = ChunkContext.GetFragmentView<FAshTeamFragment>();
 		const TConstArrayView<FAshSoldierStateFragment> StateList = ChunkContext.GetFragmentView<FAshSoldierStateFragment>();
@@ -135,10 +151,32 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 		for (FMassExecutionContext::FEntityIterator It = ChunkContext.CreateEntityIterator(); It; ++It)
 		{
 			FAshMovementFragment& Movement = MovementList[It];
+			FAshPlayerDisplacementFragment& Displacement = DisplacementList[It];
+			const FAshFormationFragment& Formation = FormationList[It];
 			const FAshCombatFragment& Combat = CombatList[It];
+			const FAshCombatTargetFragment& CombatTarget = CombatTargetList[It];
 			const FAshSquadFragment& Squad = SquadList[It];
 			const EAshSoldierState State = StateList[It].State;
 			const UAshSoldierBehaviorConfig* Cfg = BehaviorList[It].Behavior;
+			const bool bAlive = HealthList[It].CurrentHealth > 0.f;
+
+			if (!bAlive)
+			{
+				Movement.Velocity = FVector::ZeroVector;
+				continue;
+			}
+
+			const float Now = World ? World->GetTimeSeconds() : 0.f;
+			if (!Displacement.bReturningToBase && Now - Displacement.LastPushedTime > PlayerPushBaseHoldSeconds)
+			{
+				Displacement.BasePosition = Movement.Position;
+			}
+
+			if (!Displacement.bReturningToBase
+				&& FVector::DistSquared2D(Movement.Position, Displacement.BasePosition) > FMath::Square(MaxPlayerForcedDisplacement))
+			{
+				Displacement.bReturningToBase = true;
+			}
 
 			// 1. Resolve a destination, in priority order. bGroupObjective marks a shared goal
 			//    (squad objective / target base) eligible for flow-field steering; a combat
@@ -151,7 +189,21 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 			FVector TargetPos = FVector::ZeroVector;
 			bool bHasTargetPos = false;
 
-			if (Combat.Target.IsSet() && EntityManager.IsEntityValid(Combat.Target))
+			if (Displacement.bReturningToBase)
+			{
+				Destination = Displacement.BasePosition;
+				bHasDestination = true;
+				StopDistance = FMath::Max(ArrivalTolerance, 25.f);
+			}
+			else if (CombatTarget.TargetType == EAshCombatTargetType::Actor && CombatTarget.ActorTarget)
+			{
+				Destination = CombatTarget.ActorTarget->GetActorLocation();
+				TargetPos = Destination;
+				bHasTargetPos = true;
+				bHasDestination = true;
+				StopDistance = FMath::Max(ArrivalTolerance, Combat.AttackRange * 0.9f);
+			}
+			else if (Combat.Target.IsSet() && EntityManager.IsEntityValid(Combat.Target))
 			{
 				if (const FAshMovementFragment* TargetMovement = EntityManager.GetFragmentDataPtr<FAshMovementFragment>(Combat.Target))
 				{
@@ -164,12 +216,24 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 				}
 			}
 
+			if (!bHasDestination && Formation.bHasDesiredPosition)
+			{
+				Destination = Formation.DesiredWorldPosition;
+				bHasDestination = true;
+				StopDistance = 60.f;
+			}
+
 			if (!bHasDestination && SquadSubsystem)
 			{
 				FVector SquadObjective;
-				if (SquadSubsystem->GetSquadObjective(Squad.SquadId, SquadObjective))
+				float SquadFormationRadius = 0.f;
+					if (SquadSubsystem->GetSquadObjective(Squad.SquadId, SquadObjective, SquadFormationRadius))
 				{
 					Destination = SquadObjective;
+						// A general-led squad publishes a FormationRadius: members stop in a ring at that
+						// radius around the general's point instead of all converging on it (Phase 22).
+						// Legacy commander-driven squads leave the radius 0 and keep the arrival tolerance.
+						if (SquadFormationRadius > 0.f) { StopDistance = FMath::Max(StopDistance, SquadFormationRadius); }
 					bHasDestination = true;
 					bGroupObjective = true;
 				}
@@ -195,7 +259,7 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 			FVector SteerVelocity = FVector::ZeroVector;
 			FVector AdvanceDir = FVector::ZeroVector;
 			bool bAdvancing = false;
-			if (State != EAshSoldierState::Attack && bHasDestination)
+			if ((Displacement.bReturningToBase || State != EAshSoldierState::Attack) && bHasDestination)
 			{
 				const FVector ToDest = Destination - Movement.Position;
 				const float DistSq = ToDest.SizeSquared2D();
@@ -215,7 +279,7 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 						Dir = ToDest.GetSafeNormal2D();
 					}
 
-					float Speed = Movement.MoveSpeed;
+					float Speed = Displacement.bReturningToBase ? ForcedReturnSpeed : Movement.MoveSpeed;
 					if (bGroupObjective)
 					{
 						const float Slowdown = SlowdownOf(Cfg);
@@ -227,6 +291,11 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 					SteerVelocity = Dir * Speed;
 					AdvanceDir = Dir;
 					bAdvancing = true;
+				}
+				else if (Displacement.bReturningToBase)
+				{
+					Displacement.bReturningToBase = false;
+					Displacement.BasePosition = Movement.Position;
 				}
 			}
 
@@ -316,6 +385,28 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 			}
 
 			Movement.Position += Movement.Velocity * DeltaTime;
+
+			if (bPlayerCanPush && !Displacement.bReturningToBase)
+			{
+				FVector FromPlayer = Movement.Position - PlayerLocation;
+				FromPlayer.Z = 0.f;
+				const float DistSq = FromPlayer.SizeSquared();
+				if (DistSq < FMath::Square(PlayerPushRadius))
+				{
+					const float Dist = FMath::Sqrt(FMath::Max(DistSq, 1.f));
+					const FVector RadialDir = FromPlayer / Dist;
+					const FVector PlayerDir = PlayerVelocity.GetSafeNormal2D();
+					const FVector PushDir = (RadialDir + PlayerDir * 0.35f).GetSafeNormal2D();
+					const float PushAlpha = 1.f - (Dist / PlayerPushRadius);
+					Movement.Position += PushDir * (PlayerPushSpeed * PushAlpha * DeltaTime);
+					Displacement.LastPushedTime = Now;
+
+					if (FVector::DistSquared2D(Movement.Position, Displacement.BasePosition) > FMath::Square(MaxPlayerForcedDisplacement))
+					{
+						Displacement.bReturningToBase = true;
+					}
+				}
+			}
 
 			// 5. Target-aware interpolated facing (Phase 20). While engaging/attacking, face the
 			//    target so a stopped soldier still looks at its enemy (fixes "attacks facing the wrong

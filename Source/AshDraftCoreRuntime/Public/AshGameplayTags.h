@@ -27,6 +27,9 @@ namespace AshGameplayTags
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Stunned);
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Attacking);
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Capturing);
+	// A general executing its commander order at the operational layer (Phase 22). Used for
+	// telemetry / UI; the StateTree itself branches on the general's sensed-threat state, not tags.
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Commanding);
 
 	// Abilities
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Attack_Basic);
@@ -36,6 +39,10 @@ namespace AshGameplayTags
 	// Objectives
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Objective_Base_Capture);
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Objective_Base_Defend);
+	// Operational sub-objectives a general adopts mid-order (Phase 22): engaging a sensed enemy, or
+	// assaulting an enemy stronghold found in its path. The general resumes its commander order after.
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Objective_Engage);
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Objective_Assault);
 
 	// GAS data tags. Data.Damage carries the SetByCaller / computed damage magnitude
 	// passed from an attack ability into the damage Gameplay Effect (ARCHITECTURE 5.3).

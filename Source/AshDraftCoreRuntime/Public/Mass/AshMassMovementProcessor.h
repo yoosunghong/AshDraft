@@ -112,6 +112,26 @@ protected:
 	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|Avoidance", meta = (ClampMin = "0.0"))
 	float ArrivalSlowdownRadius = 250.f;
 
+	/** Radius (cm) around the player capsule within which soldiers are shoved out of the way. */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|PlayerPush", meta = (ClampMin = "0.0"))
+	float PlayerPushRadius = 140.f;
+
+	/** Extra push speed (cm/s) applied while the player is moving through a soldier. */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|PlayerPush", meta = (ClampMin = "0.0"))
+	float PlayerPushSpeed = 900.f;
+
+	/** Max distance (cm) the player may shove a soldier from its pre-push base before forced return. */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|PlayerPush", meta = (ClampMin = "0.0"))
+	float MaxPlayerForcedDisplacement = 500.f;
+
+	/** Speed (cm/s) used while forcing an over-pushed soldier back to its base position. */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|PlayerPush", meta = (ClampMin = "0.0"))
+	float ForcedReturnSpeed = 700.f;
+
+	/** Delay (s) after the last player shove before BasePosition starts following normal movement again. */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement|PlayerPush", meta = (ClampMin = "0.0"))
+	float PlayerPushBaseHoldSeconds = 0.35f;
+
 private:
 	FMassEntityQuery EntityQuery;
 };

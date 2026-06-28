@@ -15,6 +15,7 @@ namespace AshGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(State_Stunned, "Ash.State.Stunned", "Unit cannot act due to stun.");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(State_Attacking, "Ash.State.Attacking", "Unit is executing an attack.");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(State_Capturing, "Ash.State.Capturing", "Unit is capturing a base.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(State_Commanding, "Ash.State.Commanding", "General is executing its commander order (operational layer).");
 
 	// Abilities
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Ability_Attack_Basic, "Ash.Ability.Attack.Basic", "Basic attack ability.");
@@ -24,6 +25,8 @@ namespace AshGameplayTags
 	// Objectives
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Objective_Base_Capture, "Ash.Objective.Base.Capture", "Objective: capture a base.");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Objective_Base_Defend, "Ash.Objective.Base.Defend", "Objective: defend a base.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Objective_Engage, "Ash.Objective.Engage", "Sub-objective: engage a sensed enemy mid-order.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Objective_Assault, "Ash.Objective.Assault", "Sub-objective: assault an enemy stronghold in the path.");
 
 	// GAS data tags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Data_Damage, "Ash.Data.Damage", "Damage magnitude carried into the damage Gameplay Effect.");

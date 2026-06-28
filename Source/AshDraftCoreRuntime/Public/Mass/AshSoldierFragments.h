@@ -8,6 +8,7 @@
 #include "Teams/AshTeamTypes.h"
 #include "AshSoldierFragments.generated.h"
 
+class AActor;
 class UAshSoldierVisualConfig;
 class UAshSoldierBehaviorConfig;
 
@@ -85,6 +86,119 @@ struct FAshMovementFragment : public FMassFragment
 	 */
 	UPROPERTY()
 	float FacingYaw = 0.f;
+};
+
+/**
+ * Player-displacement guard. BasePosition follows the soldier during normal movement, freezes while
+ * the player is physically pushing it, and becomes the forced-return target if the shove exceeds the
+ * allowed displacement.
+ */
+USTRUCT()
+struct FAshPlayerDisplacementFragment : public FMassFragment
+{
+	GENERATED_BODY()
+
+	/** Last non-pushed position; the soldier is forced back here after an excessive player shove. */
+	UPROPERTY()
+	FVector BasePosition = FVector::ZeroVector;
+
+	/** True while normal steering is overridden to return the soldier to BasePosition. */
+	UPROPERTY()
+	bool bReturningToBase = false;
+
+	/** World time of the most recent player push. Used to decide when BasePosition may follow again. */
+	UPROPERTY()
+	float LastPushedTime = -1.e30f;
+};
+
+UENUM()
+enum class EAshFireteamRole : uint8
+{
+	Leader,
+	Member,
+};
+
+UENUM()
+enum class EAshFireteamState : uint8
+{
+	Standby,
+	Moving,
+	Engaged,
+	Reforming,
+};
+
+/** Persistent 5-soldier fireteam identity below the general-owned squad. */
+USTRUCT()
+struct FAshFireteamFragment : public FMassFragment
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int32 FireteamId = INDEX_NONE;
+
+	UPROPERTY()
+	int32 FireteamIndexInSquad = 0;
+
+	UPROPERTY()
+	int32 SlotIndex = 0;
+
+	UPROPERTY()
+	int32 FireteamSize = 5;
+
+	UPROPERTY()
+	EAshFireteamRole Role = EAshFireteamRole::Member;
+};
+
+/** Fireteam-level formation destination. Movement consumes this before the raw squad objective. */
+USTRUCT()
+struct FAshFormationFragment : public FMassFragment
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FVector LocalOffset = FVector::ZeroVector;
+
+	UPROPERTY()
+	FVector DesiredWorldPosition = FVector::ZeroVector;
+
+	UPROPERTY()
+	bool bHasDesiredPosition = false;
+
+	UPROPERTY()
+	EAshFireteamState FireteamState = EAshFireteamState::Standby;
+};
+
+UENUM()
+enum class EAshCombatTargetType : uint8
+{
+	None,
+	MassEntity,
+	Actor,
+};
+
+/** Higher-level target assignment: supports both Mass soldiers and Actor targets such as generals. */
+USTRUCT()
+struct FAshCombatTargetFragment : public FMassFragment
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	EAshCombatTargetType TargetType = EAshCombatTargetType::None;
+
+	UPROPERTY()
+	FMassEntityHandle MassTarget;
+
+	UPROPERTY()
+	TObjectPtr<AActor> ActorTarget = nullptr;
+};
+
+template<>
+struct TMassFragmentTraits<FAshCombatTargetFragment> final
+{
+	enum
+	{
+		AuthorAcceptsItsNotTriviallyCopyable = true
+	};
 };
 
 /**

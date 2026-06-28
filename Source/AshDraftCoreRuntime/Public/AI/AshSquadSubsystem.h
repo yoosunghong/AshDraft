@@ -36,10 +36,24 @@ public:
 	void SetSquadOrder(int32 SquadId, EAshSquadOrder Order, const FVector& ObjectiveLocation);
 
 	/**
+	 * Like SetSquadOrder but also sets the squad's FormationRadius (Phase 22). A General calls this
+	 * each operational update to publish its live position as the squad objective, so its troops
+	 * follow it and form up within FormationRadius when it holds. Idempotent / cheap.
+	 */
+	void SetSquadObjective(int32 SquadId, EAshSquadOrder Order, const FVector& ObjectiveLocation, float FormationRadius);
+
+	/**
 	 * Returns the squad's current objective location if it has one. Used by the Mass
 	 * movement processor to steer member soldiers toward a shared goal.
 	 */
 	bool GetSquadObjective(int32 SquadId, FVector& OutObjective) const;
+
+	/**
+	 * Like GetSquadObjective but also returns the squad's FormationRadius (0 if none). The Mass
+	 * movement processor uses the radius as the arrival distance for a general-led squad, so members
+	 * stop in a ring around the general's published point rather than all converging on it (Phase 22).
+	 */
+	bool GetSquadObjective(int32 SquadId, FVector& OutObjective, float& OutFormationRadius) const;
 
 	/** Copy of a squad's full state (default-constructed if unknown). */
 	UFUNCTION(BlueprintPure, Category = "Ash|Squad")

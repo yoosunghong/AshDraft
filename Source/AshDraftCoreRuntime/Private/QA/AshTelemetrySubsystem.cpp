@@ -6,7 +6,7 @@
 #include "AshGameplayTags.h"
 #include "Base/AshBaseActor.h"
 #include "Base/AshBaseSubsystem.h"
-#include "Character/AshEnemyGeneralCharacter.h"
+#include "Character/AshGeneralCharacter.h"
 #include "Character/AshHeroCharacter.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -174,11 +174,11 @@ int32 UAshTelemetrySubsystem::CountNearbyEnemies(const FVector& FromLocation) co
 		}
 	}
 
-	// Enemy generals.
-	for (TActorIterator<AAshEnemyGeneralCharacter> It(World); It; ++It)
+	// Enemy generals (AAshGeneralCharacter is team-agnostic since Phase 22 — filter to Enemy).
+	for (TActorIterator<AAshGeneralCharacter> It(World); It; ++It)
 	{
-		const AAshEnemyGeneralCharacter* General = *It;
-		if (!General || General->IsDead())
+		const AAshGeneralCharacter* General = *It;
+		if (!General || General->IsDead() || General->GetTeamId() != EAshTeamId::Enemy)
 		{
 			continue;
 		}

@@ -4,7 +4,7 @@
 
 #include "Base/AshBaseActor.h"
 #include "Base/AshBaseSubsystem.h"
-#include "Character/AshEnemyGeneralCharacter.h"
+#include "Character/AshGeneralCharacter.h"
 #include "Character/AshHeroCharacter.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -77,9 +77,9 @@ void UAshMatchSubsystem::Deinitialize()
 	}
 	BoundHero = nullptr;
 
-	for (const TWeakObjectPtr<AAshEnemyGeneralCharacter>& General : BoundGenerals)
+	for (const TWeakObjectPtr<AAshGeneralCharacter>& General : BoundGenerals)
 	{
-		if (AAshEnemyGeneralCharacter* Live = General.Get())
+		if (AAshGeneralCharacter* Live = General.Get())
 		{
 			Live->OnGeneralDied.RemoveDynamic(this, &UAshMatchSubsystem::HandleGeneralDied);
 		}
@@ -279,7 +279,7 @@ void UAshMatchSubsystem::HandleHeroDied(AAshHeroCharacter* /*Hero*/)
 	EndMatch(EAshMatchResult::Defeat, EAshMatchEndReason::PlayerDeath);
 }
 
-void UAshMatchSubsystem::HandleGeneralDied(AAshEnemyGeneralCharacter* /*General*/)
+void UAshMatchSubsystem::HandleGeneralDied(AAshGeneralCharacter* /*General*/)
 {
 	RemainingEnemyGenerals = FMath::Max(0, RemainingEnemyGenerals - 1);
 
@@ -342,10 +342,12 @@ void UAshMatchSubsystem::BindToEnemyGenerals()
 		return;
 	}
 
-	for (TActorIterator<AAshEnemyGeneralCharacter> It(World); It; ++It)
+	// AAshGeneralCharacter is team-agnostic (Phase 22), so filter to enemy generals — the old
+	// AAshEnemyGeneralCharacter was enemy-only by class, which this preserves.
+	for (TActorIterator<AAshGeneralCharacter> It(World); It; ++It)
 	{
-		AAshEnemyGeneralCharacter* General = *It;
-		if (!General || General->IsDead())
+		AAshGeneralCharacter* General = *It;
+		if (!General || General->IsDead() || General->GetTeamId() != EAshTeamId::Enemy)
 		{
 			continue;
 		}

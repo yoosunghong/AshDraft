@@ -38,6 +38,11 @@ public class AshDraftCoreRuntime : ModuleRules
 				"MassEntity",
                 "MassCommon",
                 "MassSpawner",
+				// StateTree-driven General operational AI (Phase 22). StateTreeModule provides the
+				// node base structs (FStateTreeTaskBase / Condition / Evaluator); GameplayStateTreeModule
+				// provides UStateTreeAIComponent + UStateTreeAIComponentSchema (AIController-bound).
+				"StateTreeModule",
+				"GameplayStateTreeModule",
 				// Telemetry / QA-bot observation + log export to JSON (Phase 17).
 				"Json",
 				"JsonUtilities",

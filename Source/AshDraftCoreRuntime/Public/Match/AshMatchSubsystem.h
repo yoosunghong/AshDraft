@@ -10,7 +10,7 @@
 
 class AAshBaseActor;
 class AAshHeroCharacter;
-class AAshEnemyGeneralCharacter;
+class AAshGeneralCharacter;
 class UAshMatchRulesConfig;
 
 /** Match started: fired once when the loop begins (after all actors BeginPlay). */
@@ -111,7 +111,7 @@ private:
 
 	/** Bound to each enemy general; wins the match once the last one dies (if enabled). */
 	UFUNCTION()
-	void HandleGeneralDied(AAshEnemyGeneralCharacter* General);
+	void HandleGeneralDied(AAshGeneralCharacter* General);
 
 	/** Fires when the optional time limit elapses; ends the match per the rules' outcome. */
 	void HandleTimeLimitReached();
@@ -163,7 +163,7 @@ private:
 
 	/** Enemy generals we bound a death handler to (for the eliminate-generals victory). */
 	UPROPERTY(Transient)
-	TArray<TWeakObjectPtr<AAshEnemyGeneralCharacter>> BoundGenerals;
+	TArray<TWeakObjectPtr<AAshGeneralCharacter>> BoundGenerals;
 
 	/** Living enemy-general count; the eliminate-generals victory fires when it hits zero. */
 	int32 RemainingEnemyGenerals = 0;

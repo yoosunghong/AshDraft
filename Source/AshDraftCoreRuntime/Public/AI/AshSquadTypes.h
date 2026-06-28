@@ -71,6 +71,15 @@ struct FAshSquadState
 	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
 	bool bHasObjective = false;
 
+	/**
+	 * Radius (cm) around ObjectiveLocation that members treat as "arrived" / form up within (Phase 22).
+	 * A General publishes its own live position as the objective with this radius, so its troops settle
+	 * into a ring around it instead of all ramming the exact point. 0 = use the movement processor's
+	 * default arrival tolerance (legacy commander-driven squads leave this 0).
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
+	float FormationRadius = 0.f;
+
 	/** Mean position of living members, refreshed by UAshMassSquadTrackingProcessor. */
 	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
 	FVector AveragePosition = FVector::ZeroVector;

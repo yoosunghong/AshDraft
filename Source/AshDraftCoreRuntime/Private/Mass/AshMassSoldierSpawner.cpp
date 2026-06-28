@@ -6,9 +6,8 @@
 #include "AI/AshSquadSubsystem.h"
 #include "Engine/World.h"
 #include "Mass/AshMassSoldierConfig.h"
-#include "Mass/AshSoldierBehaviorConfig.h"
+#include "Mass/AshMassSoldierSpawnLibrary.h"
 #include "Mass/AshSoldierFragments.h"
-#include "Mass/AshSoldierVisualConfig.h"
 #include "MassEntityManager.h"
 #include "MassEntitySubsystem.h"
 
@@ -58,91 +57,29 @@ int32 AAshMassSoldierSpawner::SpawnSoldiers()
 	}
 
 	UWorld* World = GetWorld();
-	UMassEntitySubsystem* EntitySubsystem = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
-	if (!EntitySubsystem)
+
+	// Delegate the archetype build + fragment seeding to the shared library so the spawner and the
+	// Phase 22 General create soldiers through one code path (CLAUDE.md DRY).
+	AshMassSoldierSpawn::FAshSoldierSpawnParams Params;
+	Params.Config = Config;
+	Params.TeamId = TeamId;
+	Params.SquadId = SquadId;
+	Params.Count = SpawnCount;
+	Params.Origin = GetActorLocation();
+	Params.SpawnRadius = SpawnRadius;
+	Params.FallbackMaxHealth = FallbackMaxHealth;
+	Params.FallbackMoveSpeed = FallbackMoveSpeed;
+	Params.FallbackAttackRange = FallbackAttackRange;
+	Params.FallbackAttackPower = FallbackAttackPower;
+	Params.FallbackAttackCooldown = FallbackAttackCooldown;
+
+	const int32 NumCreated = AshMassSoldierSpawn::SpawnSoldiers(World, Params, SpawnedEntities);
+	if (NumCreated == 0)
 	{
-		UE_LOG(LogAshMassSoldier, Error,
-			TEXT("AAshMassSoldierSpawner '%s': UMassEntitySubsystem unavailable; is the MassEntity plugin enabled?"),
-			*GetName());
 		return 0;
 	}
 
-	FMassEntityManager& EntityManager = EntitySubsystem->GetMutableEntityManager();
-
-	// 1. Build the soldier archetype from the six data fragments (ARCHITECTURE.md 7.2).
-	const TArray<const UScriptStruct*> FragmentTypes =
-	{
-		FAshTeamFragment::StaticStruct(),
-		FAshHealthFragment::StaticStruct(),
-		FAshMovementFragment::StaticStruct(),
-		FAshCombatFragment::StaticStruct(),
-		FAshCombatEventFragment::StaticStruct(),
-		FAshVisualFragment::StaticStruct(),
-		FAshBehaviorFragment::StaticStruct(),
-		FAshSoldierStateFragment::StaticStruct(),
-		FAshSquadFragment::StaticStruct(),
-		FAshLODFragment::StaticStruct(),
-	};
-	const FMassArchetypeHandle Archetype = EntityManager.CreateArchetype(FragmentTypes);
-
-	// Resolve tunables once (config if assigned, else inline fallbacks).
-	const float MaxHealth     = Config ? Config->MaxHealth     : FallbackMaxHealth;
-	const float MoveSpeed     = Config ? Config->MoveSpeed     : FallbackMoveSpeed;
-	const float AttackRange   = Config ? Config->AttackRange   : FallbackAttackRange;
-	const float AttackPower   = Config ? Config->AttackPower   : FallbackAttackPower;
-	const float AttackCooldown= Config ? Config->AttackCooldown: FallbackAttackCooldown;
-
-	// Visual set comes from the unit-type config (null when unassigned -> proxy stays bare).
-	UAshSoldierVisualConfig* VisualConfig = Config ? Config->Visual : nullptr;
-	// Behavior set drives the local-AI / movement / ground tunables (null -> processor fallbacks).
-	UAshSoldierBehaviorConfig* BehaviorConfig = Config ? Config->Behavior : nullptr;
-
-	const FVector Origin = GetActorLocation();
-	int32 NumCreated = 0;
-
-	// 2. Create entities and seed their fragments. A simple per-entity create loop is
-	// plenty for the foundation's scale; batch APIs are a Phase 10/18 optimization.
-	SpawnedEntities.Reserve(SpawnedEntities.Num() + SpawnCount);
-	for (int32 Index = 0; Index < SpawnCount; ++Index)
-	{
-		const FMassEntityHandle Entity = EntityManager.CreateEntity(Archetype);
-		SpawnedEntities.Add(Entity);
-
-		// Scatter across a disc on the spawner's plane.
-		const float Angle = FMath::FRandRange(0.f, 2.f * PI);
-		const float Dist = SpawnRadius * FMath::Sqrt(FMath::FRand());
-		const FVector Position = Origin + FVector(FMath::Cos(Angle) * Dist, FMath::Sin(Angle) * Dist, 0.f);
-
-		EntityManager.GetFragmentDataChecked<FAshTeamFragment>(Entity).TeamId = TeamId;
-
-		FAshHealthFragment& Health = EntityManager.GetFragmentDataChecked<FAshHealthFragment>(Entity);
-		Health.MaxHealth = MaxHealth;
-		Health.CurrentHealth = MaxHealth;
-
-		FAshMovementFragment& Movement = EntityManager.GetFragmentDataChecked<FAshMovementFragment>(Entity);
-		Movement.Position = Position;
-		Movement.Velocity = FVector::ZeroVector;
-		Movement.MoveSpeed = MoveSpeed;
-
-		FAshCombatFragment& Combat = EntityManager.GetFragmentDataChecked<FAshCombatFragment>(Entity);
-		Combat.AttackRange = AttackRange;
-		Combat.AttackPower = AttackPower;
-		Combat.AttackCooldown = AttackCooldown;
-		Combat.TimeSinceLastAttack = AttackCooldown; // ready to attack immediately
-
-		EntityManager.GetFragmentDataChecked<FAshVisualFragment>(Entity).Visual = VisualConfig;
-		EntityManager.GetFragmentDataChecked<FAshBehaviorFragment>(Entity).Behavior = BehaviorConfig;
-
-		// FAshSoldierStateFragment keeps its default (FollowSquad); the behavior processor owns it.
-
-		FAshSquadFragment& Squad = EntityManager.GetFragmentDataChecked<FAshSquadFragment>(Entity);
-		Squad.SquadId = SquadId;
-		Squad.OrderId = 0;
-
-		// LOD fragment keeps its struct defaults (LOD 0); the LOD processor (Phase 12) owns it.
-
-		++NumCreated;
-	}
+	const FVector Origin = Params.Origin;
 
 	UE_LOG(LogAshMassSoldier, Log,
 		TEXT("AAshMassSoldierSpawner '%s': created %d Mass soldier entities (team %d, squad %d). Spawner now owns %d entities."),

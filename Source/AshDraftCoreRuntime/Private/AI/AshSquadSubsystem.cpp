@@ -24,6 +24,16 @@ void UAshSquadSubsystem::SetSquadOrder(int32 SquadId, EAshSquadOrder Order, cons
 	State.bHasObjective = true;
 }
 
+void UAshSquadSubsystem::SetSquadObjective(int32 SquadId, EAshSquadOrder Order, const FVector& ObjectiveLocation, float FormationRadius)
+{
+	FAshSquadState& State = Squads.FindOrAdd(SquadId);
+	State.SquadId = SquadId;
+	State.Order = Order;
+	State.ObjectiveLocation = ObjectiveLocation;
+	State.bHasObjective = true;
+	State.FormationRadius = FormationRadius;
+}
+
 bool UAshSquadSubsystem::GetSquadObjective(int32 SquadId, FVector& OutObjective) const
 {
 	if (const FAshSquadState* State = Squads.Find(SquadId))
@@ -31,6 +41,20 @@ bool UAshSquadSubsystem::GetSquadObjective(int32 SquadId, FVector& OutObjective)
 		if (State->bHasObjective)
 		{
 			OutObjective = State->ObjectiveLocation;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool UAshSquadSubsystem::GetSquadObjective(int32 SquadId, FVector& OutObjective, float& OutFormationRadius) const
+{
+	if (const FAshSquadState* State = Squads.Find(SquadId))
+	{
+		if (State->bHasObjective)
+		{
+			OutObjective = State->ObjectiveLocation;
+			OutFormationRadius = State->FormationRadius;
 			return true;
 		}
 	}

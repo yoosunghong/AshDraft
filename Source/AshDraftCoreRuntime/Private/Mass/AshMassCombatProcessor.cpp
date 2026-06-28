@@ -2,6 +2,7 @@
 
 #include "Mass/AshMassCombatProcessor.h"
 
+#include "Character/AshGeneralCharacter.h"
 #include "Mass/AshSoldierFragments.h"
 #include "MassExecutionContext.h"
 
@@ -21,6 +22,7 @@ void UAshMassCombatProcessor::ConfigureQueries(const TSharedRef<FMassEntityManag
 	EntityQuery.AddRequirement<FAshMovementFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshHealthFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshCombatFragment>(EMassFragmentAccess::ReadWrite);
+	EntityQuery.AddRequirement<FAshCombatTargetFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshCombatEventFragment>(EMassFragmentAccess::ReadWrite);
 }
 
@@ -33,6 +35,7 @@ void UAshMassCombatProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 		const TConstArrayView<FAshMovementFragment> MovementList = ChunkContext.GetFragmentView<FAshMovementFragment>();
 		const TConstArrayView<FAshHealthFragment> HealthList = ChunkContext.GetFragmentView<FAshHealthFragment>();
 		const TArrayView<FAshCombatFragment> CombatList = ChunkContext.GetMutableFragmentView<FAshCombatFragment>();
+		const TConstArrayView<FAshCombatTargetFragment> CombatTargetList = ChunkContext.GetFragmentView<FAshCombatTargetFragment>();
 		const TArrayView<FAshCombatEventFragment> EventList = ChunkContext.GetMutableFragmentView<FAshCombatEventFragment>();
 
 		for (FMassExecutionContext::FEntityIterator It = ChunkContext.CreateEntityIterator(); It; ++It)
@@ -44,8 +47,27 @@ void UAshMassCombatProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 			}
 
 			FAshCombatFragment& Combat = CombatList[It];
+			const FAshCombatTargetFragment& CombatTarget = CombatTargetList[It];
 			// Cooldown advances every frame; the strike below is naturally rate-limited by it.
 			Combat.TimeSinceLastAttack += DeltaTime;
+
+			if (CombatTarget.TargetType == EAshCombatTargetType::Actor)
+			{
+				AAshGeneralCharacter* TargetGeneral = Cast<AAshGeneralCharacter>(CombatTarget.ActorTarget);
+				if (!TargetGeneral || TargetGeneral->IsDead())
+				{
+					continue;
+				}
+
+				const float DistSq = FVector::DistSquared2D(MovementList[It].Position, TargetGeneral->GetActorLocation());
+				if (DistSq <= FMath::Square(Combat.AttackRange) && Combat.TimeSinceLastAttack >= Combat.AttackCooldown)
+				{
+					TargetGeneral->ReceiveSoldierDamage(Combat.AttackPower, nullptr);
+					Combat.TimeSinceLastAttack = 0.f;
+					EventList[It].bAttackedThisTick = true;
+				}
+				continue;
+			}
 
 			// The behavior processor selected this target (local, leashed). Drop it if it has died or
 			// been destroyed since.
