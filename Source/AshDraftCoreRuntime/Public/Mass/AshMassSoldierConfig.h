@@ -62,4 +62,12 @@ public:
 	/** Seconds between attacks. Seeds FAshCombatFragment::AttackCooldown. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|MassSoldier|Combat", meta = (ClampMin = "0.05"))
 	float AttackCooldown = 1.5f;
+
+	/**
+	 * Per-strike randomization of the attack cooldown (0..1). Each swing's interval is drawn from
+	 * AttackCooldown * [1 - variance, 1 + variance] so soldiers trade blows on staggered timing instead
+	 * of the whole line swinging in unison. Seeds FAshCombatFragment::AttackCooldownVariance.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|MassSoldier|Combat", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float AttackCooldownVariance = 0.4f;
 };

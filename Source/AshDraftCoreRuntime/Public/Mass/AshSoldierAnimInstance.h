@@ -29,7 +29,28 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Ash|Anim")
 	float GroundSpeed = 0.f;
 
+	/**
+	 * Signed angle (degrees, -180..180) between the soldier's *travel* direction and the direction it is
+	 * *facing*. 0 = moving where it looks (walk forward), ±180 = moving backwards (the Dynasty-Warriors
+	 * kiting backpedal — a soldier gives ground while still facing the enemy), ±90 = strafing. Feed this
+	 * to the X (Direction) axis of a 2D locomotion blendspace so backpedalling plays a backward-walk clip
+	 * instead of a forward one. Same semantics as UKismetAnimationLibrary::CalculateDirection.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Anim")
+	float Direction = 0.f;
+
 	/** True while the soldier is moving above the proxy's facing threshold; gates Idle<->Move. */
 	UPROPERTY(BlueprintReadOnly, Category = "Ash|Anim")
 	bool bIsMoving = false;
+
+	/**
+	 * True while the soldier is engaged in melee — closing on, striking, or surrounding/menacing a target
+	 * (Phase 28). Drives an optional combat-stance: a soldier in this state should hold its weapon up and
+	 * threaten (the "combat idle" of the back-rank waiting soldiers that sells the crowded Musou battlefield)
+	 * rather than play the relaxed out-of-combat idle. Branch your AnimBP's Idle pose on this to get the
+	 * guard pose; locomotion (GroundSpeed/Direction) is unaffected, so a circling soldier strafes in stance.
+	 * Optional polish — the surround behavior itself works without any AnimBP change.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Anim")
+	bool bInCombatStance = false;
 };

@@ -8,6 +8,7 @@
 
 class UAnimInstance;
 class UAnimMontage;
+class UAnimSequenceBase;
 class USkeletalMesh;
 
 /**
@@ -71,4 +72,14 @@ public:
 	/** Montage played when this unit is hit. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UnitVisual|Animation")
 	TObjectPtr<UAnimMontage> HitReactMontage;
+
+	/**
+	 * Animation played once when this unit dies (Phase 27). It is a raw **AnimSequence**, not a montage:
+	 * the representation proxy plays it in single-node mode (`PlayAnimation`, non-looping) the frame the
+	 * soldier's health hits zero, which **holds the final frame** (the downed pose) for the whole corpse
+	 * window — no AnimBP authoring needed and no blend back to idle. The proxy restores its AnimBP when the
+	 * pooled body is recycled for a live soldier.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UnitVisual|Animation")
+	TObjectPtr<UAnimSequenceBase> DeathAnim;
 };

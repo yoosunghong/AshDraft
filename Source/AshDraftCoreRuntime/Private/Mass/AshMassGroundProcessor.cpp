@@ -3,8 +3,10 @@
 #include "Mass/AshMassGroundProcessor.h"
 
 #include "CollisionQueryParams.h"
+#include "Components/PrimitiveComponent.h"
 #include "Engine/HitResult.h"
 #include "Engine/World.h"
+#include "GameFramework/Pawn.h"
 #include "Mass/AshSoldierBehaviorConfig.h"
 #include "Mass/AshSoldierFragments.h"
 #include "MassExecutionContext.h"
@@ -69,10 +71,31 @@ void UAshMassGroundProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 			const FVector Start = Movement.Position + FVector(0.f, 0.f, Cfg->GroundTraceUp);
 			const FVector End = Movement.Position - FVector(0.f, 0.f, Cfg->GroundTraceDown);
 
-			FHitResult Hit;
-			if (World->LineTraceSingleByChannel(Hit, Start, End, Cfg->GroundTraceChannel.GetValue(), TraceParams))
+			// Conform to the *ground*, never to another body. A single blocking trace would snap onto the
+			// first thing it hits — and a Character capsule (the hero / a general) blocks WorldStatic, so a
+			// soldier overlapping one would climb up onto it ("soldiers step on each other and rise"). Use a
+			// multi-trace and take the first hit that is real terrain, skipping any pawn (hero/generals) or
+			// Pawn-typed component (soldier proxy hit capsules).
+			TArray<FHitResult> Hits;
+			if (World->LineTraceMultiByChannel(Hits, Start, End, Cfg->GroundTraceChannel.GetValue(), TraceParams))
 			{
-				Movement.Position.Z = Hit.ImpactPoint.Z;
+				for (const FHitResult& Hit : Hits)
+				{
+					// A multi-trace also returns *overlap* (touch) hits, not just solid ground — e.g. a
+					// base's query-only capture volume (OverlapAllDynamic). Only stand on a real blocking
+					// surface, or a soldier climbs onto the base's overlap dome.
+					if (!Hit.bBlockingHit)
+					{
+						continue;
+					}
+					const UPrimitiveComponent* HitComp = Hit.GetComponent();
+					if (Cast<APawn>(Hit.GetActor()) || (HitComp && HitComp->GetCollisionObjectType() == ECC_Pawn))
+					{
+						continue; // a body, not the ground — don't stand on it
+					}
+					Movement.Position.Z = Hit.ImpactPoint.Z;
+					break;
+				}
 			}
 		}
 	});

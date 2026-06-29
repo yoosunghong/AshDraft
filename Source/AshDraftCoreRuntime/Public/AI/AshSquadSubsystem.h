@@ -40,7 +40,7 @@ public:
 	 * each operational update to publish its live position as the squad objective, so its troops
 	 * follow it and form up within FormationRadius when it holds. Idempotent / cheap.
 	 */
-	void SetSquadObjective(int32 SquadId, EAshSquadOrder Order, const FVector& ObjectiveLocation, float FormationRadius);
+	void SetSquadObjective(int32 SquadId, EAshSquadOrder Order, const FVector& ObjectiveLocation, float FormationRadius, const FVector& Facing = FVector::ForwardVector);
 
 	/**
 	 * Returns the squad's current objective location if it has one. Used by the Mass
@@ -54,6 +54,13 @@ public:
 	 * stop in a ring around the general's published point rather than all converging on it (Phase 22).
 	 */
 	bool GetSquadObjective(int32 SquadId, FVector& OutObjective, float& OutFormationRadius) const;
+
+	/**
+	 * Like the radius overload but also returns the squad's stable formation facing (Phase 27). The
+	 * fireteam processor orients the at-rest formation along this fixed direction so the troops settle
+	 * instead of orbiting the objective.
+	 */
+	bool GetSquadObjective(int32 SquadId, FVector& OutObjective, float& OutFormationRadius, FVector& OutFacing) const;
 
 	/** Copy of a squad's full state (default-constructed if unknown). */
 	UFUNCTION(BlueprintPure, Category = "Ash|Squad")

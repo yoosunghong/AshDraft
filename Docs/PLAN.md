@@ -135,6 +135,31 @@
     formation, sub-objective preempt+resume, and LOD think-rate falloff. See
     `Done/DONE_general_statetree_system.md` + `Docs/Guides/Phase22_General_StateTree_Setup_Guide.md`.
 
+- [ ] Phase 23: Large-Battle Combat Feel (general-vs-general field report)
+  - Fixes four defects from a 30v30 general duel ("doesn't feel like a large-scale battle"). All
+    tunables are data-driven (`UAshGeneralConfig`, `UAshMassSoldierConfig`, `UAshSoldierBehaviorConfig`).
+  - **TroopCount = squads, not soldiers.** `UAshGeneralConfig::TroopCount` is now the number of
+    5-soldier squads; the general spawns `TroopCount * 5` (default 6 → 30). See `AshGeneralCharacter::SpawnTroops`.
+  - **Distributed deployment.** `AshMassSoldierSpawn::SpawnSoldiers` no longer scatters every soldier
+    across one disc — each fireteam gets its own cluster centre (golden-angle spread within
+    `TroopSpawnRadius`) and its members sit at the V slots, so squads start spread out, not intermixed.
+  - **No more convergence on the generals.** `UAshMassFireteamProcessor` matchmaking reworked: hostile
+    fireteams pair off **1:1 by mutual proximity** (greedy), the outnumbered remainder doubles up, and
+    only fireteams with no enemy squad left in range fall back to a general — generals stop being a
+    crowd magnet, the clash spreads into a brawl.
+  - **Anti-climbing.** Same-team `SeparationRadius` 90→120 and combat anchor resistance 0.85→0.6;
+    plus the kiting standoff keeps opposing bodies apart, so soldiers stop stacking on one point.
+  - **Dynasty-Warriors kiting.** New per-soldier press/retreat oscillation (behavior processor owns the
+    randomized phase; movement processor steers to a close strike standoff vs. a wider give-ground
+    standoff) and **randomized attack cadence** (`AttackCooldownVariance`) so lines edge in and out
+    trading blows on staggered timing instead of grinding in place.
+  - Build verified (LyraEditor Win64 Development — Succeeded, 2026-06-28, editor closed). PENDING USER:
+    restart the editor; set `DA_General_*` TroopCount to a squad count (e.g. 5–6); optionally tune
+    `DA_*_Behavior` kiting fields + `AttackCooldownVariance`; PIE-verify squads deploy spread out, brawl
+    squad-on-squad (not all on the generals), trade blows with ebb/flow, and no longer climb each other.
+    For the kiting backpedal animation, author the locomotion blend space per
+    `Docs/Guides/Phase23_Locomotion_BlendSpace_Setup_Guide.md`. See `Done/DONE_large_battle_combat_feel.md`.
+
 - [ ] Phase 20.1: Engage-on-contact + distributed deployment (follow-up to two field reports)
   - **Combat on contact while marching** — the leash was measured from the squad's *final* objective,
     so an army marching toward a distant objective via flow field had every soldier beyond the leash
@@ -152,4 +177,182 @@
     `ArrivalSlowdownRadius`); processor fallbacks preserved. See `Done/DONE_mass_soldier_engage_and_deploy.md`.
   - PENDING USER: rebuild with the **editor closed** (new `UPROPERTY`s on Mass fragments/struct change
     reflection — not Live-Coding-safe); PIE-verify mid-march engagement and no centre shake.
+
+- [ ] Phase 24: Global Combat + Engagement Deployment Director (Dynasty-Warriors battle)
+  - Fixes "doesn't feel like a real battlefield" — two generals met and their armies formed one long
+    grinding line. The old fireteam matchmaking was per-frame, local and proximity-greedy: every squad
+    just attacked whatever was straight ahead. There was no *global plan*, no deliberate march to a
+    designated foe, no circular spread.
+  - **Global Combat state.** New `UAshBattleSubsystem` (the "Engagement Director"): a timer-driven world
+    subsystem (no Tick — CLAUDE.md 18.3) that detects when two hostile **Generals** come within
+    `BattleEncounterRadius` and forms a **Battle** (connected-component clustering supports N generals).
+    `IsInCombat()` / `GetActiveBattleCount()` expose the state.
+  - **Engagement deployment algorithm** (recomputed only on the 0.5 s replan, so assignments are
+    *persistent* and a squad *commits*): gather both sides' fireteams; **balanced global matching**
+    (greedy 1:1 by mutual proximity; the surplus side doubles up onto the nearest under-cap enemy →
+    1v1 / 1v2, never 1v5, capped by `MaxAttackersPerEnemyFireteam`); **ring deployment** — each duel
+    gets an evenly-spaced angular slot on a circle (`DuelRingRadius`) around the battle centre, ordered
+    by current angle to minimise cross-running, so the melee becomes a *ring of simultaneous squad
+    duels* instead of a line. `FAshEngagementAssignment` (enemy fireteam id + shared ring slot).
+  - **March to a designated enemy, ignore everything en route.** `UAshMassFireteamProcessor` consumes
+    the plan: a fireteam first **Deploys** straight to its ring slot (new `EAshFireteamState::Deploying`
+    makes `UAshMassSoldierBehaviorProcessor` suppress local sensing, so the squad ignores every enemy
+    it passes), then hands off to **Engaged** at the slot and duels its designated enemy. Out of combat
+    the existing Phase 23 greedy proximity is the fallback — no regression to normal marching.
+  - All tunables data-driven on `UAshGeneralConfig` (`BattleEncounterRadius`, `DuelRingRadius`,
+    `MaxAttackersPerEnemyFireteam`, read as max() across the clashing generals) + the fireteam
+    processor (`BattleSlotArrivalDistance`, `BattleEngageProximity`). `Ash.Battle.Debug 1` draws the
+    battle centre, duel ring and slots. See `Done/DONE_global_combat_engagement_director.md`.
+  - PENDING USER: rebuild with the **editor closed** (new subsystem/types + `UPROPERTY`s on
+    `UAshGeneralConfig`; the new `EAshFireteamState::Deploying` value is enum-only so no struct layout
+    change). Place an Ally and an Enemy `AAshGeneralCharacter` with troops; set `DA_General_*` battle
+    fields; PIE-verify: when the generals close, both armies split into a ring of 1v1/1v2 squad duels
+    around them (not a line), squads march past intervening enemies to reach their assigned foe, and the
+    fight spreads out. Tune `DuelRingRadius` for the circle size; `Ash.Battle.Debug 1` to see the plan.
+  - **Backward movement removed (follow-up).** The Phase 23 press/retreat *kiting* (the backpedal where
+    soldiers gave ground to a wider standoff) is gone: a soldier now closes to its striking standoff and
+    **holds**, never steering backward (same-team separation seats the spacing). Removed the kiting phase
+    state (`FAshSoldierStateFragment::bAdvancePhase`/`CombatPhaseEndTime` — struct layout change, so the
+    rebuild must be editor-closed) and the retreat-only `UAshSoldierBehaviorConfig` fields
+    (`bEnableCombatKiting`, `RetreatStandoffScale`, `RetreatSpeedScale`, `Press/RetreatDuration*`,
+    `KiteHysteresisBand`); kept `AttackStandoffScale` + `MinCombatSpacing` for the hold distance. The
+    randomized attack cadence (`AttackCooldownVariance`) is unaffected. The backward locomotion
+    blendspace/anim from Phase 23 is now optional (soldiers no longer drive a backpedal clip).
+
+- [ ] Phase 25: Player-in-the-crowd combat fixes (three field defects)
+  - Fixes three defects reported when the hero fights inside the soldier mass. All code-only; no new data.
+    1. **Player trapped when surrounded** — the soldier proxy hit capsule is meant to be query-only/overlap
+       (never blocking; crowd spacing is the steering separation), but nothing re-asserted that at runtime,
+       so a blocking preset on `B_Soldier_Proxy` could wall the player in (can't move/rotate).
+       `AAshSoldierProxyActor::AssignToEntity` now forces overlap-only collision (object type Pawn, ignore
+       all, overlap Pawn) every assignment, so soldiers can never physically block movement.
+    2. **Soldiers climb each other / rise when packed** — `UAshMassGroundProcessor` snapped Z to the first
+       blocking ground-trace hit, and a Character capsule (hero/general) blocks `ECC_WorldStatic`, so a
+       soldier overlapping a body climbed onto it. The trace is now a multi-trace that skips any pawn
+       (hero/generals) and any Pawn-typed component (proxy capsules) and conforms only to real terrain.
+    3. **Enemy soldiers ignore the player** — soldiers acquired targets only from the fireteam actor-target
+       path (generals only) and the behavior sense grid (Mass entities only); the hero is neither, so no
+       soldier could ever target it and they milled about the squad objective. The fireteam processor's
+       actor-target fallback now also considers the hostile player pawn, the combat processor damages the
+       hero (new `AAshHeroCharacter::ReceiveSoldierDamage`, mirroring the general) and the existing
+       movement/behavior actor-target paths drive the approach + facing.
+  - PENDING USER: rebuild with the **editor closed** (new `UFUNCTION` on `AAshHeroCharacter` — header
+    change, not Live-Coding-safe); PIE-verify: the hero can walk/turn freely when fully surrounded, soldiers
+    no longer stack vertically when packed, and enemy soldiers close in and attack the hero. See
+    `Done/DONE_player_crowd_combat_fixes.md`.
+
+- [ ] Phase 26: Battlefield Combat Feel — Stable Deployment + Melee Dissolve
+  - **IMPLEMENTED (code); build verified; PENDING USER editor/PIE tuning.** Full spec: `Docs/Plan/Phase26.md`;
+    `Done/DONE_battlefield_combat_feel.md`.
+  - Review-driven phase fixing two field reports + structural debt in the Phase 20→24 combat stack:
+    (1) squads **move back and forth** instead of committing to the matched enemy squad; (2) soldiers
+    fight **too clustered with an unnaturally regular front line** (only ever attack the foe directly
+    ahead — no flanking, no rear engagement, no chaos of contact). Chosen direction: **Hybrid** — keep
+    the deliberate spread deployment (stabilised) and dissolve to individual melee on contact.
+  - **Issue #1 root causes** (back-and-forth): (A) the duel ring is recomputed from scratch every 0.5 s
+    replan, so committed fireteams get a *different* ring slot each time and re-march — `BaseAngle` and
+    `2π/NumDuels` come from live midpoints (`AshBattleSubsystem::Replan`); (B) the engaged anchor
+    `Target + normalize(MyAvg − Target)*420` **flips side** as a squad crosses the contact point; (C) on
+    per-soldier target loss, movement snaps back to the 420-back formation anchor → the squad "breathes";
+    (D) out-of-battle matchmaking is rebuilt every frame, greedy, **no hysteresis**.
+  - **Issue #2 root causes** (clustered/regular): (E) engagement is at *squad* granularity (every member
+    targets the matched slot soldier); (F) the rigid V is held into contact; (G) interpenetration is
+    forbidden (stop-at-range + same-team-only separation + attacker anchor); (H) a soldier only ever sees
+    the single nearest hostile, and the leash herds strays back — no path to a rear-rank opponent.
+  - **Planned fixes** (all data-driven): stable **persistent duel ring** (cached axis + persistent slot
+    index per fireteam + smoothed centre); non-flipping own-side anchor from the general→centre axis;
+    target-loss **hold**; matchmaking **hysteresis**; a new shared **`AshEngagement`** helper module
+    (`BalancedPairing` + `AcquireCappedNearest`) that removes the matching duplication between the battle
+    subsystem and the fireteam processor (the "common algorithm helper" the review called for); a
+    **`FAshMeleeSolver`** dissolve so engaged soldiers pair off with **distinct** opponents and surplus
+    soldiers seek the nearest **open** enemy (→ organic flanking + **rear engagement**); opt-in weak
+    opposing anti-stack so lines **jumble** without vertical climbing (Phase 25 ground guard preserved).
+    Plus structural cleanup: **split** the `UAshMassFireteamProcessor::Execute` god-method and de-hardcode
+    the V offsets / column count / thresholds into config.
+  - New: `AshEngagement` helper module (`BalancedPairing` + `AcquireCappedNearest`) — the shared matcher
+    that removes the duplication between `UAshBattleSubsystem` and `UAshMassFireteamProcessor`. The battle
+    director now keeps **persistent ring state** (stable axis + per-fireteam slot index + smoothed centre,
+    adaptive replan timer) so committed squads keep their seat instead of re-marching. The fireteam
+    processor is split (decompose / stamp / fallback / apply) and **hands soldier targeting to the melee
+    dissolve on contact** (no per-slot targets); the behavior processor's `AcquireCappedNearest` spreads
+    attackers across distinct enemies (claim cap) so the surplus reaches **rear** ranks; the movement
+    processor adds an **opt-in weak enemy anti-stack** (`EnemySeparationRadius`, default 0) so lines
+    **jumble**. De-hardcoded the V offsets, column count, and stop/standby thresholds into data.
+  - Build verified (LyraEditor Win64 Development — Succeeded, 2026-06-29, editor closed). PENDING USER
+    (editor + PIE): restart the editor; optionally tune `DA_*_Behavior` melee fields + `DA_General_*` ring
+    fields; PIE-verify squads deploy spread + hold (no back-and-forth), lines jumble on contact, surplus
+    soldiers engage rear enemies, no vertical climbing. `Ash.Battle.Debug 1` to see the ring.
+
+- [ ] Phase 27: Unit death animations + squad melee spacing (two field requests)
+  - **Death animations (soldiers + generals), corpse removed after 5 s.** Soldiers no longer vanish the
+    instant they die: `UAshMassDeathProcessor` now flips a new `FAshDeathFragment` (`bIsDying`/`DeathTime`)
+    the frame health hits zero and only reaps the entity after `DeathDisplayDuration` (data-driven, default
+    5 s). The representation processor keeps the soldier's **existing** proxy through the corpse window and
+    plays the unit's new `UAshSoldierVisualConfig::DeathAnim` once (it never acquires a *new* proxy just for a
+    corpse, so living soldiers keep priority on the bounded pool). The death anim plays in **single-node mode**
+    (`PlayAnimation`, non-looping) so it **holds the final frame** for the whole window — no AnimBP authoring,
+    no "returns to standing" blend-back (the original montage approach blended out to idle). The proxy restores
+    `AnimationBlueprint` mode when recycled. A dying (zero-health) entity is inert — every gameplay processor
+    already gates on `CurrentHealth > 0`, so it neither moves, fights, nor is targeted. Generals
+    (`AAshGeneralCharacter`) and the hero (`AAshHeroCharacter`) play a `DeathAnim` (single-node) in
+    `HandleDeath`; the general despawns after `DeathLifeSpan` (5 s), the hero persists (defeat flow).
+  - **Squad-vs-squad melee spacing + general engagement (1v1 / 1v2).** Three combat-feel fixes:
+    1. *Spacing:* an engaged fireteam fans its soldiers **abreast along the contact front on its own side**
+       (`EngageLineSlot`, keyed on `SlotIndex`/`FireteamSize`; `EngageLineSpacing` + `EngageOwnSideOffset`)
+       instead of collapsing every soldier onto the single contact point (the 10-on-one-spot pile).
+    2. *Stable spread / no jitter:* the engage-line facing is low-pass filtered (`EngageFacingSmoothTime`,
+       `SmoothedEngageFacing`, pass 2c) and never updated from a degenerate (intermixed) delta, so the opposing
+       lines stay separated even in a merged melee and soldiers stop chasing a jittering anchor (was the source
+       of the erratic motion).
+    3. *Soldiers around the generals:* `UAshGeneralConfig::GuardFireteamCount` (default 1) keeps each general's
+       nearest fireteam(s) as a personal guard — excluded from the duel ring in `UAshBattleSubsystem`, they
+       follow the general's combat objective and fight around it, so the generals no longer duel alone in an
+       empty ring clearing.
+  - All tunables data-driven (`UAshMassDeathProcessor::DeathDisplayDuration`, `UAshSoldierVisualConfig::DeathAnim`,
+    `AAshGeneralCharacter`/`AAshHeroCharacter::DeathAnim`, `UAshMassFireteamProcessor::EngageLineSpacing`/
+    `EngageOwnSideOffset`/`EngageFacingSmoothTime`, `UAshGeneralConfig::GuardFireteamCount`). New
+    `FAshDeathFragment` (added to the soldier archetype). See `Done/DONE_unit_death_animations.md` +
+    `Done/DONE_squad_melee_spacing.md`.
+  - Build verified (LyraEditor Win64 Development — Succeeded, 2026-06-29, editor closed). PENDING USER
+    (editor + PIE): rebuild with the editor closed (new fragment/UPROPERTYs — not Live-Coding-safe); assign a
+    death **AnimSequence** (`DeathAnim`) on each `DA_*_Visual` and on the general/hero Blueprints (no AnimBP
+    work needed); PIE-verify dead bodies play the death anim, **hold the downed pose**, and despawn after 5 s;
+    a 1v1/1v2 squad clash spreads into spaced ranks (no single-point pile); and the generals fight with their
+    guard squads around them. Tune `GuardFireteamCount` for more troops near the generals, `EngageLineSpacing`/
+    `EngageOwnSideOffset` for rank spread, `DuelRingRadius` (`DA_General_*`) for the ring size.
+
+- [ ] Phase 28: Target Attack-Slot / Surround system (Musou crowd feel — field advice)
+  - Review-driven phase applying external Dynasty-Warriors combat advice ("the key secret is target
+    slotting + only a few attack while the rest circle and menace"). The prior stack already had the
+    fireteam duel ring + count-capped melee dissolve; the genuine gaps were at the *individual soldier ↔
+    individual target* granularity. Both are now closed by a per-target **attack-slot ring**.
+  - **Inner / outer ring per target.** When N soldiers commit to one target (a Mass enemy **or** an actor
+    general/hero) the first `ActiveAttackerCount` take **inner** slots — they close to the striking
+    standoff and attack (the existing approach). The rest take the **outer** ring: a new
+    `EAshSoldierState::Surround` where they hold a wider radius, **slowly orbit** (`SurroundOrbitSpeed`),
+    face the target and menace, and **never strike** (the combat processor skips Surround). A circler is
+    promoted to an inner slot the moment one frees (an inner attacker dies / retargets), so the crowd
+    rotates. This is the cinematic cap from the brief — "only 3–5 attack while the rest circle".
+  - **Slot angle = own approach bearing.** Each soldier rings the target on *its own side* (no
+    cross-running); the outer bearing drifts each frame for the orbit; same-team separation fans the ring
+    out. Inner/outer seats are stable frame-to-frame (kept while the target is kept) so soldiers don't
+    flip-flop between striking and circling.
+  - **Ratio-adaptive for free.** In a balanced army clash with a modest `MaxAttackersPerEnemySoldier`,
+    squads still pair off 1v1/1v2 (no surround → no regression). Where soldiers outnumber targets —
+    around the hero, a lone general, or the last survivor — they form a real surround ring (the iconic
+    Musou shot; also makes the hero wade through crowds instead of being melted by a swarm).
+  - All tunables data-driven on `UAshSoldierBehaviorConfig` (`ActiveAttackerCount`, `SurroundRingGap`,
+    `SurroundOrbitSpeed`; `MaxAttackersPerEnemySoldier` reframed as the full ring capacity = strikers +
+    waiters). Optional anim hook: `UAshSoldierAnimInstance::bInCombatStance` is pushed to the proxy so an
+    AnimBP can show a guard/menace idle for circling soldiers — the surround works without it.
+  - New: `EAshSoldierState::Surround` + `FAshSoldierStateFragment::SlotAngle` (fragment layout change → the
+    rebuild must be **editor-closed**). Modified: behavior processor (inner/outer ring decision for Mass +
+    actor targets), movement processor (outer-ring orbit destination + facing/hold for Surround),
+    combat processor (Surround never strikes), representation processor + proxy + anim instance (combat
+    stance hook). See `Done/DONE_target_attack_slots.md`.
+  - PENDING USER: rebuild with the **editor closed** (new fragment field + enum value); to enable a visible
+    surround, raise `DA_*_Behavior.MaxAttackersPerEnemySoldier` (e.g. 6–8) above `ActiveAttackerCount`
+    (e.g. 3) and optionally tune `SurroundRingGap` / `SurroundOrbitSpeed`; PIE-verify: around the hero /
+    a lone general a few soldiers strike while the rest circle and menace; a balanced army clash still
+    pairs off without piling. Optional: branch the minion AnimBP idle on `bInCombatStance` for a guard pose.
 

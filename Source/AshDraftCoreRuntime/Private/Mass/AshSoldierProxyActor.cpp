@@ -62,10 +62,25 @@ void AAshSoldierProxyActor::AssignToEntity(FMassEntityHandle Entity, EAshTeamId 
 	SetActorHiddenInGame(false);
 
 	// Become a hittable target only while representing a live soldier (pooled proxies must not be
-	// stray hits under the player's attack sweep).
+	// stray hits under the player's attack sweep). Re-assert overlap-only collision at runtime (after any
+	// Blueprint defaults on B_Soldier_Proxy have applied) so the capsule can NEVER block movement: a
+	// blocking preset here would wall the player in when surrounded ("player can't move/rotate"). Crowd
+	// spacing must stay the data-oriented steering separation, never physical blocking.
 	if (HitCapsule)
 	{
 		HitCapsule->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		HitCapsule->SetCollisionObjectType(ECC_Pawn);
+		HitCapsule->SetCollisionResponseToAllChannels(ECR_Ignore);
+		HitCapsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	}
+
+	// Pooled proxies are recycled across soldiers: a proxy that was a corpse is left in single-node mode
+	// holding its death pose. Restore AnimBlueprint mode so the recycled body animates as a live soldier
+	// again (the AnimClass is still applied, so switching modes re-creates the locomotion instance). For a
+	// different unit type, ConfigureVisual re-applies mesh + AnimClass and overrides this anyway.
+	if (MeshComponent && MeshComponent->GetAnimationMode() != EAnimationMode::AnimationBlueprint)
+	{
+		MeshComponent->SetAnimationMode(EAnimationMode::AnimationBlueprint);
 	}
 }
 
@@ -91,7 +106,8 @@ void AAshSoldierProxyActor::ClearAssignment()
 	}
 }
 
-void AAshSoldierProxyActor::SyncFromEntity(const FVector& Position, float FacingYaw, const FVector& Velocity, float /*HealthFraction*/)
+void AAshSoldierProxyActor::SyncFromEntity(const FVector& Position, float FacingYaw, const FVector& Velocity, float /*HealthFraction*/,
+	bool bInCombatStance)
 {
 	// Mass is the authority; the proxy follows the entity's position and faces the Mass-authoritative
 	// heading. Health fraction is accepted for future visual feedback (damage tint, scale) but unused
@@ -107,13 +123,30 @@ void AAshSoldierProxyActor::SyncFromEntity(const FVector& Position, float Facing
 	const float PlanarSpeed = Planar.Size();
 	const bool bMoving = PlanarSpeed > FacingSpeedThreshold;
 
+	// Travel direction relative to facing (degrees, -180..180): 0 = walking forward, ±180 = backpedalling
+	// (kiting retreat while still facing the enemy), ±90 = strafing. Lets a 2D blendspace pick a
+	// backward-walk clip instead of a forward one. Computed from the planar velocity and the facing yaw
+	// by hand (atan2 of the cross/dot) so the proxy needs no extra anim-library dependency.
+	float Direction = 0.f;
+	if (bMoving)
+	{
+		const float YawRad = FMath::DegreesToRadians(FacingYaw);
+		const FVector2D Facing2D(FMath::Cos(YawRad), FMath::Sin(YawRad));
+		const FVector2D Vel2D = FVector2D(Planar.X, Planar.Y).GetSafeNormal();
+		const float Dot = FVector2D::DotProduct(Facing2D, Vel2D);
+		const float Cross = Facing2D.X * Vel2D.Y - Facing2D.Y * Vel2D.X;
+		Direction = FMath::RadiansToDegrees(FMath::Atan2(Cross, Dot));
+	}
+
 	// Feed Mass-authoritative locomotion to the AnimBP. The proxy has no movement component, so the
 	// AnimBP can't read GetVelocity(); this is how Idle<->Move blends get a real speed. Only rendered
 	// proxies have a live anim instance (OnlyTickPoseWhenRendered), so a null here is expected/cheap.
 	if (UAshSoldierAnimInstance* SoldierAnim = Cast<UAshSoldierAnimInstance>(MeshComponent->GetAnimInstance()))
 	{
 		SoldierAnim->GroundSpeed = PlanarSpeed;
+		SoldierAnim->Direction = Direction;
 		SoldierAnim->bIsMoving = bMoving;
+		SoldierAnim->bInCombatStance = bInCombatStance;
 	}
 }
 
@@ -201,6 +234,23 @@ void AAshSoldierProxyActor::PlayAttackMontage()
 void AAshSoldierProxyActor::PlayHitReactMontage()
 {
 	PlayMontage(CurrentVisual ? CurrentVisual->HitReactMontage : nullptr);
+}
+
+void AAshSoldierProxyActor::PlayDeath()
+{
+	// A corpse must not be struck again or block anything.
+	if (HitCapsule)
+	{
+		HitCapsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+
+	// Single-node, non-looping playback bypasses the AnimBP and freezes on the final frame (the downed
+	// pose) for the whole corpse window — so the body never blends back to idle. AssignToEntity restores
+	// AnimBlueprint mode when this proxy is later recycled for a live soldier.
+	if (MeshComponent && CurrentVisual && CurrentVisual->DeathAnim)
+	{
+		MeshComponent->PlayAnimation(CurrentVisual->DeathAnim, /*bLooping=*/false);
+	}
 }
 
 void AAshSoldierProxyActor::PlayMontage(UAnimMontage* Montage)

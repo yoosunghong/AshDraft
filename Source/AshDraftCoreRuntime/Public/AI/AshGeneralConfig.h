@@ -32,13 +32,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|Troops")
 	TObjectPtr<UAshMassSoldierConfig> SoldierConfig;
 
-	/** How many soldiers this general commands (spawned on BeginPlay). Data-driven army size. */
+	/**
+	 * Number of 5-soldier squads (fireteams) this general commands. The actual soldier body is
+	 * TroopCount * 5 — e.g. TroopCount = 5 spawns five V-shaped squads (25 soldiers). Each squad
+	 * deploys as its own cluster within TroopSpawnRadius so the army starts spread out, not piled up.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|Troops", meta = (ClampMin = "0"))
-	int32 TroopCount = 60;
+	int32 TroopCount = 6;
 
-	/** Radius (cm) of the disc the troops are scattered across when first spawned. */
+	/** Radius (cm) of the area the squads are distributed across when first spawned. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|Troops", meta = (ClampMin = "0.0"))
-	float TroopSpawnRadius = 800.f;
+	float TroopSpawnRadius = 1200.f;
 
 	/**
 	 * Radius (cm) the troops form up within around the general (the "certain range around the General"
@@ -87,6 +91,62 @@ public:
 	/** Formation radius (cm) used while soldiers are being pulled into an active general-vs-general fight. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|Troops", meta = (ClampMin = "0.0"))
 	float CombatFormationRadius = 250.f;
+
+	// --- Global Combat / Engagement Director (Phase 24) ---
+
+	/**
+	 * Distance (cm) at which this general's approach to a hostile general triggers a **Battle** (the
+	 * global combat state). On encounter, UAshBattleSubsystem assigns every fireteam a designated enemy
+	 * squad + a deployment slot on a ring around the battle centre, and the soldiers march straight to
+	 * it. Larger = the clash forms from further out. Read as max() across the two clashing generals.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|Battle", meta = (ClampMin = "0.0"))
+	float BattleEncounterRadius = 3000.f;
+
+	/**
+	 * Radius (cm) of the circle the squad duels are spread around. Each duel gets an evenly-spaced
+	 * angular slot at this radius from the battle centre, so the melee forms a ring of simultaneous
+	 * 1v1/1v2 fights (Dynasty-Warriors style) instead of one long grinding line. Read as max() across
+	 * the clashing generals.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|Battle", meta = (ClampMin = "0.0"))
+	float DuelRingRadius = 1400.f;
+
+	/**
+	 * Cap on how many friendly fireteams may pile onto one enemy fireteam when sides are unequal. The
+	 * surplus side doubles up onto the nearest under-cap enemy (1v1 -> 1v2), never 1v5 — so duels stay
+	 * roughly symmetric. 2 = allow up to a 1v2. Read as max() across the clashing generals.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|Battle", meta = (ClampMin = "1"))
+	int32 MaxAttackersPerEnemyFireteam = 2;
+
+	/**
+	 * How many of the general's *closest* fireteams stay as a personal guard instead of being sent out to
+	 * the duel ring (Phase 27). Without this every fireteam rings out at DuelRingRadius and the generals
+	 * end up dueling alone in an empty clearing; the guard keeps a knot of soldiers fighting *around* the
+	 * general. These fireteams get no ring assignment, so they follow the general's own combat objective
+	 * and engage whatever is near it (the enemy's guards / the rival general). 0 = the old behaviour
+	 * (everyone rings out). Applied per general (each keeps its own nearest fireteams).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|Battle", meta = (ClampMin = "0"))
+	int32 GuardFireteamCount = 1;
+
+	/**
+	 * Smoothing (0..1) applied to the battle centre between replans. The centre is a low-pass filter of
+	 * the participating generals' mean, so the duel ring drifts smoothly instead of snapping each replan
+	 * (a snapping centre was part of why committed squads appeared to march back and forth). Lower = more
+	 * stable / laggier; 1 = follow the generals instantly. Read as max() across the clashing generals.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|Battle", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float RingRecenterSmoothing = 0.25f;
+
+	/**
+	 * Seconds between engagement replans. Fast enough to react to a wiped squad, slow enough that each
+	 * fireteam commits to its duel + ring slot between replans. The subsystem adapts its timer to the
+	 * max() of this across the clashing generals (a constant fallback applies before any general exists).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|Battle", meta = (ClampMin = "0.05"))
+	float ReplanPeriod = 0.5f;
 
 	// --- Decision logic ---
 

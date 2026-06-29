@@ -80,6 +80,15 @@ struct FAshSquadState
 	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
 	float FormationRadius = 0.f;
 
+	/**
+	 * Stable world-space facing the squad forms up along (Phase 27). A General publishes its own forward
+	 * vector here. The fireteam formation uses this fixed orientation instead of deriving it from each
+	 * fireteam's instantaneous position relative to the objective — which rotated as the fireteam moved,
+	 * so the formation slot rotated and the troops orbited the objective forever instead of settling.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
+	FVector ObjectiveFacing = FVector::ForwardVector;
+
 	/** Mean position of living members, refreshed by UAshMassSquadTrackingProcessor. */
 	UPROPERTY(BlueprintReadOnly, Category = "Ash|Squad")
 	FVector AveragePosition = FVector::ZeroVector;

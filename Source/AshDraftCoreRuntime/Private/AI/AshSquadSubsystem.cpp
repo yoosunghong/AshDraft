@@ -24,7 +24,7 @@ void UAshSquadSubsystem::SetSquadOrder(int32 SquadId, EAshSquadOrder Order, cons
 	State.bHasObjective = true;
 }
 
-void UAshSquadSubsystem::SetSquadObjective(int32 SquadId, EAshSquadOrder Order, const FVector& ObjectiveLocation, float FormationRadius)
+void UAshSquadSubsystem::SetSquadObjective(int32 SquadId, EAshSquadOrder Order, const FVector& ObjectiveLocation, float FormationRadius, const FVector& Facing)
 {
 	FAshSquadState& State = Squads.FindOrAdd(SquadId);
 	State.SquadId = SquadId;
@@ -32,6 +32,13 @@ void UAshSquadSubsystem::SetSquadObjective(int32 SquadId, EAshSquadOrder Order, 
 	State.ObjectiveLocation = ObjectiveLocation;
 	State.bHasObjective = true;
 	State.FormationRadius = FormationRadius;
+
+	// Keep a valid (planar, unit) facing; ignore a degenerate input so the last good orientation holds.
+	FVector PlanarFacing(Facing.X, Facing.Y, 0.f);
+	if (PlanarFacing.Normalize())
+	{
+		State.ObjectiveFacing = PlanarFacing;
+	}
 }
 
 bool UAshSquadSubsystem::GetSquadObjective(int32 SquadId, FVector& OutObjective) const
@@ -55,6 +62,21 @@ bool UAshSquadSubsystem::GetSquadObjective(int32 SquadId, FVector& OutObjective,
 		{
 			OutObjective = State->ObjectiveLocation;
 			OutFormationRadius = State->FormationRadius;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool UAshSquadSubsystem::GetSquadObjective(int32 SquadId, FVector& OutObjective, float& OutFormationRadius, FVector& OutFacing) const
+{
+	if (const FAshSquadState* State = Squads.Find(SquadId))
+	{
+		if (State->bHasObjective)
+		{
+			OutObjective = State->ObjectiveLocation;
+			OutFormationRadius = State->FormationRadius;
+			OutFacing = State->ObjectiveFacing;
 			return true;
 		}
 	}

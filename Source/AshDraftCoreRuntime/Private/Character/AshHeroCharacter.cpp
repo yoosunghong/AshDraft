@@ -5,9 +5,11 @@
 #include "AbilitySystem/AshAbilitySystemComponent.h"
 #include "AbilitySystem/AshAttributeSet.h"
 #include "AbilitySystem/AshGameplayAbility.h"
+#include "Animation/AnimSequenceBase.h"
 #include "AshGameplayTags.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -126,7 +128,7 @@ void AAshHeroCharacter::HandleDeath()
 		AbilitySystemComponent->AddLooseGameplayTag(AshGameplayTags::State_Dead);
 	}
 
-	// Stop interaction/movement (placeholder for a death montage/ragdoll + respawn flow).
+	// Stop interaction/movement (the player pawn persists for the defeat flow / camera).
 	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
 	{
 		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -135,6 +137,16 @@ void AAshHeroCharacter::HandleDeath()
 	{
 		MoveComp->StopMovementImmediately();
 		MoveComp->DisableMovement();
+	}
+
+	// Play the death animation (Phase 27). Single-node, non-looping playback on the mesh holds the final
+	// (downed) frame instead of blending back to idle; harmless if no anim/mesh is set.
+	if (DeathAnim)
+	{
+		if (USkeletalMeshComponent* DeathMesh = GetMesh())
+		{
+			DeathMesh->PlayAnimation(DeathAnim, /*bLooping=*/false);
+		}
 	}
 
 	// Notify listeners (the match loop ends as a defeat). Single-player PoC: death is terminal.
@@ -228,6 +240,21 @@ void AAshHeroCharacter::GrantDefaultAbilities()
 	}
 
 	bAbilitiesGranted = true;
+}
+
+void AAshHeroCharacter::ReceiveSoldierDamage(float Amount, AActor* /*DamageInstigator*/)
+{
+	if (bIsDead || Amount <= 0.f || !AbilitySystemComponent)
+	{
+		return;
+	}
+
+	// Mirror the general's path: drive Health directly on the attribute set. The health-changed delegate
+	// raises HandleDeath at zero, so this stays consistent with GAS-applied damage (the defeat flow).
+	const float CurrentHealth = AbilitySystemComponent->GetNumericAttribute(UAshAttributeSet::GetHealthAttribute());
+	AbilitySystemComponent->SetNumericAttributeBase(
+		UAshAttributeSet::GetHealthAttribute(),
+		FMath::Max(0.f, CurrentHealth - Amount));
 }
 
 float AAshHeroCharacter::GetHealth() const

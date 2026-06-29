@@ -69,7 +69,9 @@ void UAshMassMovementProcessor::ConfigureQueries(const TSharedRef<FMassEntityMan
 	EntityQuery.AddRequirement<FAshCombatTargetFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshSquadFragment>(EMassFragmentAccess::ReadOnly);
 	EntityQuery.AddRequirement<FAshTeamFragment>(EMassFragmentAccess::ReadOnly);
-	EntityQuery.AddRequirement<FAshSoldierStateFragment>(EMassFragmentAccess::ReadOnly);
+	// ReadWrite: the movement processor drifts FAshSoldierStateFragment::SlotAngle each frame so a
+	// surrounding (waiting) soldier orbits its target (Phase 28).
+	EntityQuery.AddRequirement<FAshSoldierStateFragment>(EMassFragmentAccess::ReadWrite);
 	EntityQuery.AddRequirement<FAshBehaviorFragment>(EMassFragmentAccess::ReadOnly);
 }
 
@@ -97,6 +99,13 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 	const auto AnchorOf      = [this](const UAshSoldierBehaviorConfig* C){ return C ? C->CombatAnchorResistance : CombatAnchorResistance; };
 	const auto TurnRateOf    = [this](const UAshSoldierBehaviorConfig* C){ return C ? C->TurnRateDegPerSec      : FacingTurnRateDegPerSec; };
 	const auto SlowdownOf    = [this](const UAshSoldierBehaviorConfig* C){ return C ? C->ArrivalSlowdownRadius  : ArrivalSlowdownRadius; };
+	// Surround ring (Phase 28): how far the waiting ring sits beyond the striker standoff, and how fast
+	// waiting soldiers orbit. Fallbacks mirror UAshSoldierBehaviorConfig's defaults.
+	const auto SurroundGapOf      = [](const UAshSoldierBehaviorConfig* C){ return C ? C->SurroundRingGap         : 150.f; };
+	const auto SurroundOrbitOf    = [](const UAshSoldierBehaviorConfig* C){ return C ? C->SurroundOrbitSpeed      : 35.f; };
+	// Opposing anti-stack (Phase 26). Default 0 = the old hard standoff (opposing lines never overlap).
+	const auto EnemySepRadiusOf   = [](const UAshSoldierBehaviorConfig* C){ return C ? C->EnemySeparationRadius   : 0.f; };
+	const auto EnemySepStrengthOf = [](const UAshSoldierBehaviorConfig* C){ return C ? C->EnemySeparationStrength : 0.f; };
 
 	// Size the avoidance grid to the largest separation radius in play so a 3x3 neighbourhood always
 	// covers any soldier's personal space, even with mixed unit types.
@@ -106,7 +115,9 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 		const TConstArrayView<FAshBehaviorFragment> BehaviorList = ChunkContext.GetFragmentView<FAshBehaviorFragment>();
 		for (FMassExecutionContext::FEntityIterator It = ChunkContext.CreateEntityIterator(); It; ++It)
 		{
-			MaxSepRadius = FMath::Max(MaxSepRadius, SepRadiusOf(BehaviorList[It].Behavior));
+			const UAshSoldierBehaviorConfig* B = BehaviorList[It].Behavior;
+			// Cover both same-team and (opt-in) enemy anti-stack radii so the 3x3 sweep never misses one.
+			MaxSepRadius = FMath::Max3(MaxSepRadius, SepRadiusOf(B), EnemySepRadiusOf(B));
 		}
 	});
 
@@ -114,11 +125,10 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 	const float CellSize = FMath::Max(1.f, MaxSepRadius);
 
 	// Inter-soldier avoidance: hash every soldier's *current* position AND team into a uniform grid
-	// once, so the steering pass finds crowding neighbours in O(1). Team is stored because separation
-	// is applied to *same-team* crowders only: soldiers must not shove enemies (that is what let the
-	// bigger army bulldoze the smaller); opposing lines are kept apart by the attack-range stop and
-	// combat anchoring instead. Positions are this frame's pre-integration values, so the pass is
-	// order-independent (no soldier sees others' half-updated positions).
+	// once, so the steering pass finds crowding neighbours in O(1). Team is stored because same-team
+	// separation (spacing within a formation) and enemy separation (a weak anti-stack so opposing lines
+	// can jumble without perfectly overlapping, Phase 26) are applied with different radii/strengths.
+	// Positions are this frame's pre-integration values, so the pass is order-independent.
 	struct FNeighbour { FVector Pos; EAshTeamId Team; };
 	TMap<FIntPoint, TArray<FNeighbour>> SpatialGrid;
 	if (bAvoidance)
@@ -145,7 +155,7 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 		const TConstArrayView<FAshCombatTargetFragment> CombatTargetList = ChunkContext.GetFragmentView<FAshCombatTargetFragment>();
 		const TConstArrayView<FAshSquadFragment> SquadList = ChunkContext.GetFragmentView<FAshSquadFragment>();
 		const TConstArrayView<FAshTeamFragment> TeamList = ChunkContext.GetFragmentView<FAshTeamFragment>();
-		const TConstArrayView<FAshSoldierStateFragment> StateList = ChunkContext.GetFragmentView<FAshSoldierStateFragment>();
+		const TArrayView<FAshSoldierStateFragment> StateList = ChunkContext.GetMutableFragmentView<FAshSoldierStateFragment>();
 		const TConstArrayView<FAshBehaviorFragment> BehaviorList = ChunkContext.GetFragmentView<FAshBehaviorFragment>();
 
 		for (FMassExecutionContext::FEntityIterator It = ChunkContext.CreateEntityIterator(); It; ++It)
@@ -156,7 +166,8 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 			const FAshCombatFragment& Combat = CombatList[It];
 			const FAshCombatTargetFragment& CombatTarget = CombatTargetList[It];
 			const FAshSquadFragment& Squad = SquadList[It];
-			const EAshSoldierState State = StateList[It].State;
+			FAshSoldierStateFragment& StateFrag = StateList[It];
+			const EAshSoldierState State = StateFrag.State;
 			const UAshSoldierBehaviorConfig* Cfg = BehaviorList[It].Behavior;
 			const bool bAlive = HealthList[It].CurrentHealth > 0.f;
 
@@ -216,30 +227,38 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 				}
 			}
 
+			// Target-loss hold (Phase 26): an Engage/Attack soldier whose target died has no resolved
+			// target this frame. Don't fall back to the squad/base objective (which would march it out of
+			// the melee); let it hold at the contact (formation desired = the contact anchor) so the
+			// behavior processor can hand it a fresh nearby enemy on its next AI-LOD tick.
+			const bool bHoldNoTarget = !bHasTargetPos && !Displacement.bReturningToBase
+				&& (State == EAshSoldierState::Attack || State == EAshSoldierState::Engage
+					|| State == EAshSoldierState::Surround);
+
 			if (!bHasDestination && Formation.bHasDesiredPosition)
 			{
 				Destination = Formation.DesiredWorldPosition;
 				bHasDestination = true;
-				StopDistance = 60.f;
+				StopDistance = FormationStopDistance;
 			}
 
-			if (!bHasDestination && SquadSubsystem)
+			if (!bHoldNoTarget && !bHasDestination && SquadSubsystem)
 			{
 				FVector SquadObjective;
 				float SquadFormationRadius = 0.f;
-					if (SquadSubsystem->GetSquadObjective(Squad.SquadId, SquadObjective, SquadFormationRadius))
+				if (SquadSubsystem->GetSquadObjective(Squad.SquadId, SquadObjective, SquadFormationRadius))
 				{
 					Destination = SquadObjective;
-						// A general-led squad publishes a FormationRadius: members stop in a ring at that
-						// radius around the general's point instead of all converging on it (Phase 22).
-						// Legacy commander-driven squads leave the radius 0 and keep the arrival tolerance.
-						if (SquadFormationRadius > 0.f) { StopDistance = FMath::Max(StopDistance, SquadFormationRadius); }
+					// A general-led squad publishes a FormationRadius: members stop in a ring at that
+					// radius around the general's point instead of all converging on it (Phase 22).
+					// Legacy commander-driven squads leave the radius 0 and keep the arrival tolerance.
+					if (SquadFormationRadius > 0.f) { StopDistance = FMath::Max(StopDistance, SquadFormationRadius); }
 					bHasDestination = true;
 					bGroupObjective = true;
 				}
 			}
 
-			if (!bHasDestination)
+			if (!bHoldNoTarget && !bHasDestination)
 			{
 				FVector BaseLocation;
 				if (FindNearestCapturableBase(World, TeamList[It].TeamId, Movement.Position, BaseLocation))
@@ -259,7 +278,58 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 			FVector SteerVelocity = FVector::ZeroVector;
 			FVector AdvanceDir = FVector::ZeroVector;
 			bool bAdvancing = false;
-			if ((Displacement.bReturningToBase || State != EAshSoldierState::Attack) && bHasDestination)
+
+			// 2a. Combat approach (close to striking range, then hold — no backpedal). A soldier with a
+			//     combat target steers in until it is just inside attack range, then holds its ground; it
+			//     never moves backward. Same-team separation seats the final spacing, and facing (step 5)
+			//     keeps it pointed at the enemy while it holds and strikes.
+			const bool bCombatApproach = bHasTargetPos && !Displacement.bReturningToBase;
+			if (bCombatApproach)
+			{
+				const float AttackRange = Combat.AttackRange;
+				const float StandoffDist = FMath::Max(
+					Cfg ? Cfg->MinCombatSpacing : 110.f,
+					AttackRange * (Cfg ? Cfg->AttackStandoffScale : 0.85f));
+
+				if (State == EAshSoldierState::Surround)
+				{
+					// Outer (waiting) ring: orbit slowly around the target at a radius past strike range, so a
+					// few soldiers fight at the inner standoff while the surplus circle and menace (Phase 28 —
+					// the Musou crowd). The slot bearing drifts each frame so the whole ring rotates; the
+					// soldier tracks its moving slot without overshoot (the speed is capped to land exactly on
+					// it), which reads as a smooth circle-around rather than a queue.
+					StateFrag.SlotAngle += FMath::DegreesToRadians(SurroundOrbitOf(Cfg)) * DeltaTime;
+					const float OuterRadius = FMath::Max(StandoffDist + SurroundGapOf(Cfg), AttackRange * 1.15f);
+					const FVector SlotPos = TargetPos
+						+ FVector(FMath::Cos(StateFrag.SlotAngle), FMath::Sin(StateFrag.SlotAngle), 0.f) * OuterRadius;
+					FVector ToSlot = SlotPos - Movement.Position;
+					ToSlot.Z = 0.f;
+					const float Dist = ToSlot.Size();
+					if (Dist > KINDA_SMALL_NUMBER)
+					{
+						const FVector Dir = ToSlot / Dist;
+						const float Speed = FMath::Min(Movement.MoveSpeed, Dist / FMath::Max(DeltaTime, KINDA_SMALL_NUMBER));
+						SteerVelocity = Dir * Speed;
+						AdvanceDir = Dir;
+						bAdvancing = true;
+					}
+				}
+				else
+				{
+					FVector ToTarget = TargetPos - Movement.Position;
+					ToTarget.Z = 0.f;
+					const float Dist = ToTarget.Size();
+					if (Dist > StandoffDist && Dist > KINDA_SMALL_NUMBER)
+					{
+						const FVector Dir = ToTarget / Dist;
+						SteerVelocity = Dir * Movement.MoveSpeed; // close in to strike
+						AdvanceDir = Dir;
+						bAdvancing = true;
+					}
+					// else: within striking standoff — hold; same-team separation seats spacing (no backstep).
+				}
+			}
+			else if ((Displacement.bReturningToBase || State != EAshSoldierState::Attack) && bHasDestination)
 			{
 				const FVector ToDest = Destination - Movement.Position;
 				const float DistSq = ToDest.SizeSquared2D();
@@ -299,31 +369,22 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 				}
 			}
 
-			// 3. Same-team separation + distributed deployment. One 3x3 neighbour sweep gathers both the
-			//    spread-apart push and whether a squad-mate already occupies the space ahead toward a
-			//    group objective. Stability measures that fix the old jitter and the "bigger army shoves
-			//    the smaller" defect (Phase 20):
-			//      - each neighbour's contribution is clamped (MaxPushPerNeighbor) so two stacked
-			//        soldiers can't fling each other as distance -> 0;
-			//      - the push is relaxed (SeparationRelaxation < 1) so a crowd settles instead of
-			//        oscillating frame to frame;
-			//      - an Attack-state soldier resists the push (CombatAnchorResistance) so the front
-			//        line holds rather than being pushed through.
-			//    Distributed deployment (Phase 20.1): a soldier advancing on a group objective that finds
-			//    a same-team neighbour both ahead (toward the goal) and nearer the goal than itself is
-			//    treated as having reached the formation edge — it stops pressing in and lets separation
-			//    seat it at spacing. Rear ranks therefore fan out into a stable, minimum-distance
-			//    formation around the objective instead of all piling onto the one point (the trapped,
-			//    shaking centre). The combined velocity is clamped to MoveSpeed so avoidance never overspeeds.
+			// 3. Separation. One 3x3 neighbour sweep gathers the same-team spread-apart push (with the
+			//    distributed-deployment "blocked ahead" test) AND, when enabled, a weak ENEMY anti-stack
+			//    push so opposing lines can interpenetrate and jumble without bodies perfectly overlapping
+			//    (Phase 26). Same-team stability measures (clamp, relaxation, combat-anchor) are unchanged.
 			FVector Push = FVector::ZeroVector;
+			FVector EnemyPush = FVector::ZeroVector;
 			bool bBlockedAhead = false;
 			if (bAvoidance)
 			{
 				const float SepRadius = SepRadiusOf(Cfg);
-				if (SepRadius > 0.f)
+				const float EnemySepRadius = EnemySepRadiusOf(Cfg);
+				if (SepRadius > 0.f || EnemySepRadius > 0.f)
 				{
 					const FIntPoint Cell = PositionToCell(Movement.Position, CellSize);
 					const float RadiusSq = SepRadius * SepRadius;
+					const float EnemyRadiusSq = EnemySepRadius * EnemySepRadius;
 					const float MaxPush = MaxPushOf(Cfg);
 					const EAshTeamId SelfTeam = TeamList[It].TeamId;
 					const float SelfDistToDestSq = (bAdvancing && bGroupObjective)
@@ -339,27 +400,36 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 							}
 							for (const FNeighbour& N : *Bucket)
 							{
-								if (N.Team != SelfTeam)
-								{
-									continue; // Same-team spacing only; never shove enemies.
-								}
 								FVector Off = Movement.Position - N.Pos;
 								Off.Z = 0.f;
 								const float DistSq = Off.SizeSquared();
-								if (DistSq > KINDA_SMALL_NUMBER && DistSq < RadiusSq)
+								if (DistSq <= KINDA_SMALL_NUMBER)
 								{
-									const float Dist = FMath::Sqrt(DistSq);
-									const float Contribution = FMath::Min(MaxPush, 1.f - Dist / SepRadius);
-									Push += (Off / Dist) * Contribution;
-
-									// Distributed deployment: a squad-mate ahead of us and closer to the
-									// group objective means we've reached the formation edge — stop pressing in.
-									if (bAdvancing && bGroupObjective
-										&& FVector::DotProduct(-Off, AdvanceDir) > 0.f
-										&& FVector::DistSquared2D(N.Pos, Destination) < SelfDistToDestSq)
+									continue;
+								}
+								if (N.Team == SelfTeam)
+								{
+									if (SepRadius > 0.f && DistSq < RadiusSq)
 									{
-										bBlockedAhead = true;
+										const float Dist = FMath::Sqrt(DistSq);
+										const float Contribution = FMath::Min(MaxPush, 1.f - Dist / SepRadius);
+										Push += (Off / Dist) * Contribution;
+
+										// Distributed deployment: a squad-mate ahead of us and closer to the
+										// group objective means we've reached the formation edge — stop pressing in.
+										if (bAdvancing && bGroupObjective
+											&& FVector::DotProduct(-Off, AdvanceDir) > 0.f
+											&& FVector::DistSquared2D(N.Pos, Destination) < SelfDistToDestSq)
+										{
+											bBlockedAhead = true;
+										}
 									}
+								}
+								else if (EnemySepRadius > 0.f && DistSq < EnemyRadiusSq)
+								{
+									// Weak opposing anti-stack: lets lines blend/jumble without overlapping.
+									const float Dist = FMath::Sqrt(DistSq);
+									EnemyPush += (Off / Dist) * (1.f - Dist / EnemySepRadius);
 								}
 							}
 						}
@@ -368,15 +438,24 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 			}
 
 			// 4. Combine. A blocked soldier abandons its forward press so separation can seat it at
-			//    spacing behind the rank ahead; otherwise it keeps its (eased) steer velocity.
+			//    spacing behind the rank ahead; otherwise it keeps its (eased) steer velocity. Enemy
+			//    anti-stack is NOT anchor-resisted (even an attacker yields a little so bodies slip past),
+			//    while same-team anchoring still holds the line. Combined velocity is clamped to MoveSpeed.
 			Movement.Velocity = bBlockedAhead ? FVector::ZeroVector : SteerVelocity;
-			if (!Push.IsNearlyZero())
+			if (!Push.IsNearlyZero() || !EnemyPush.IsNearlyZero())
 			{
 				const float Relax = FMath::Clamp(SepRelaxOf(Cfg), 0.f, 1.f);
-				const float AnchorScale = (State == EAshSoldierState::Attack)
-					? (1.f - FMath::Clamp(AnchorOf(Cfg), 0.f, 1.f))
-					: 1.f;
-				Movement.Velocity += Push * (Movement.MoveSpeed * SepStrengthOf(Cfg) * Relax * AnchorScale);
+				if (!Push.IsNearlyZero())
+				{
+					const float AnchorScale = (State == EAshSoldierState::Attack)
+						? (1.f - FMath::Clamp(AnchorOf(Cfg), 0.f, 1.f))
+						: 1.f;
+					Movement.Velocity += Push * (Movement.MoveSpeed * SepStrengthOf(Cfg) * Relax * AnchorScale);
+				}
+				if (!EnemyPush.IsNearlyZero())
+				{
+					Movement.Velocity += EnemyPush * (Movement.MoveSpeed * EnemySepStrengthOf(Cfg) * Relax);
+				}
 				const float MaxSpeed = Movement.MoveSpeed;
 				if (MaxSpeed > 0.f && Movement.Velocity.SizeSquared() > FMath::Square(MaxSpeed))
 				{
@@ -414,7 +493,10 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 			//    body never snaps and separation pushes don't whip the facing around.
 			float DesiredYaw = Movement.FacingYaw;
 			bool bHaveDesired = false;
-			if ((State == EAshSoldierState::Attack || State == EAshSoldierState::Engage) && bHasTargetPos)
+			// Attack/Engage (closing strikers) and Surround (orbiting waiters) all face the target so they
+			// menace it while strafing the ring — the body looks at the enemy even though it sidesteps (Phase 28).
+			if ((State == EAshSoldierState::Attack || State == EAshSoldierState::Engage
+				|| State == EAshSoldierState::Surround) && bHasTargetPos)
 			{
 				const FVector ToTarget = TargetPos - Movement.Position;
 				if (ToTarget.SizeSquared2D() > KINDA_SMALL_NUMBER)

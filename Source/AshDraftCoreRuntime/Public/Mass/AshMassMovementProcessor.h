@@ -60,6 +60,10 @@ protected:
 	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement", meta = (ClampMin = "0.0"))
 	float ArrivalTolerance = 100.f;
 
+	/** Stop distance (cm) when steering to a fireteam formation slot (was a hardcoded 60). */
+	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement", meta = (ClampMin = "0.0"))
+	float FormationStopDistance = 60.f;
+
 	/** Direct vs flow-field steering for group objectives (Phase 14 comparison switch). */
 	UPROPERTY(config, EditDefaultsOnly, Category = "Ash|MassMovement")
 	EAshGroupNavMode GroupNavMode = EAshGroupNavMode::FlowField;

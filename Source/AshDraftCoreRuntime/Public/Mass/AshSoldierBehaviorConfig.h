@@ -47,6 +47,100 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Sensing", meta = (ClampMin = "0.0"))
 	float MaxLeashFromObjective = 1200.f;
 
+	// --- Combat spacing (soldiers close to striking range and hold; no backpedal) ---
+
+	/**
+	 * Preferred striking distance as a fraction of the unit's AttackRange. < 1 so the soldier closes
+	 * just inside attack range to land a hit, then holds there (it never steers backward — same-team
+	 * separation seats the spacing). Also floored by MinCombatSpacing so bodies never fully overlap.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Combat", meta = (ClampMin = "0.0"))
+	float AttackStandoffScale = 0.85f;
+
+	/** Absolute floor (cm) on the striking standoff so opposing soldiers keep their bodies apart in melee. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Combat", meta = (ClampMin = "0.0"))
+	float MinCombatSpacing = 110.f;
+
+	// --- Melee dissolve (Phase 26: distinct soldier-vs-soldier pairing, jumbled front, rear engagement) ---
+
+	/**
+	 * Max soldiers of one side that may COMMIT to the SAME enemy soldier (its full attack ring capacity:
+	 * inner strikers + outer waiters) before the surplus must pick a different (open) enemy. Once a target
+	 * is full the overflow is forced toward deeper, unclaimed enemies (organic flanking / rear engagement).
+	 *
+	 * Interplay with ActiveAttackerCount (Phase 28): the first ActiveAttackerCount committers strike from
+	 * the inner ring; committers beyond that (up to this cap) take the outer Surround ring and only menace.
+	 * So a small value (e.g. 2) keeps a 30v30 army pairing off 1v1/1v2 (no surround); a larger value (6-8)
+	 * lets soldiers form a real surround ring where they outnumber targets (around the hero / a lone
+	 * general / the last survivor) — the Musou crowd.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Melee", meta = (ClampMin = "1"))
+	int32 MaxAttackersPerEnemySoldier = 4;
+
+	// --- Surround / attack-slot ring (Phase 28: the "few attack, the rest circle and menace" Musou look) ---
+
+	/**
+	 * How many soldiers around any ONE target actually strike (the inner ring). The rest of the committers
+	 * (up to MaxAttackersPerEnemySoldier) take the outer Surround ring: they hold a wider radius, slowly
+	 * orbit, face the target and threaten, but do NOT attack until an inner slot frees up. This is the
+	 * cinematic cap from the brief — "only 3 to 5 soldiers actually attack while the rest circle". Clamped
+	 * to MaxAttackersPerEnemySoldier. When >= the cap, every committer strikes (the pre-Phase-28 behavior).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Melee", meta = (ClampMin = "1"))
+	int32 ActiveAttackerCount = 3;
+
+	/**
+	 * Extra radius (cm) the outer Surround ring sits beyond a striker's standoff distance. The outer ring
+	 * is always pushed past attack range so waiting soldiers physically can't reach the target — they ring
+	 * it. Larger = a looser, more visible surround; smaller = the crowd presses in tighter.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Melee", meta = (ClampMin = "0.0"))
+	float SurroundRingGap = 150.f;
+
+	/**
+	 * How fast (deg/s) a waiting (Surround) soldier orbits its target. Gives the back ranks the restless
+	 * circle-around motion that makes the battlefield read as crowded and chaotic instead of statically
+	 * queued. 0 = the surround ring holds still (soldiers just wait their turn in place).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Melee", meta = (ClampMin = "0.0"))
+	float SurroundOrbitSpeed = 35.f;
+
+	/**
+	 * Radius (cm) the soldier-vs-soldier brawl may wander from its fireteam's *contact anchor* (the duel
+	 * ring slot) once engaged in a battle. Keeps the jumble a local bubble around each contact point —
+	 * soldiers may cross the original line to reach an open enemy, but the squad does not disperse across
+	 * the map. Falls back to MaxLeashFromObjective (anchored to the engage point) outside a battle.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Melee", meta = (ClampMin = "0.0"))
+	float MeleeChaseRadius = 700.f;
+
+	/** Distance (cm) bonus that keeps a soldier on its current melee target — anti-thrash hysteresis. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Melee", meta = (ClampMin = "0.0"))
+	float MeleeTargetStickiness = 150.f;
+
+	/**
+	 * Personal-space radius (cm) applied against ENEMY soldiers at close range. 0 (default) reproduces the
+	 * old hard standoff (opposing lines never overlap). A small non-zero value lets opposing bodies slip
+	 * past each other so the front lines blend/jumble instead of forming a clean wall, while still
+	 * preventing perfect overlap. Keep it well under SeparationRadius (anti-stack only, not anti-approach).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Melee", meta = (ClampMin = "0.0"))
+	float EnemySeparationRadius = 0.f;
+
+	/** Push magnitude (relative to MoveSpeed) of the enemy anti-stack. Only matters when EnemySeparationRadius > 0. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Melee", meta = (ClampMin = "0.0"))
+	float EnemySeparationStrength = 0.35f;
+
+	// --- Fireteam formation (data-driven V; replaces the hardcoded spawn offsets) ---
+
+	/**
+	 * Formation-local slot offsets (+X forward, +Y right) for the soldiers of one fireteam — the spawn
+	 * shape AND the re-form shape read the same source. Empty = the spawn library's built-in 5-soldier V
+	 * arrowhead. Authoring more/larger formations is now pure data (CLAUDE.md: no hardcoded gameplay values).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Formation")
+	TArray<FVector> FireteamSlotOffsets;
+
 	// --- Facing (fixes "attacks while facing the wrong way") ---
 
 	/**
@@ -61,7 +155,7 @@ public:
 
 	/** Personal-space radius (cm); same-team neighbours closer than this push apart. ~ body diameter. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Separation", meta = (ClampMin = "0.0"))
-	float SeparationRadius = 90.f;
+	float SeparationRadius = 120.f;
 
 	/** Push magnitude relative to MoveSpeed; the combined steer+separation velocity is clamped to MoveSpeed. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Separation", meta = (ClampMin = "0.0"))
@@ -89,7 +183,7 @@ public:
 	 * thinner enemy line ("attacks while pushing").
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Separation", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float CombatAnchorResistance = 0.85f;
+	float CombatAnchorResistance = 0.6f;
 
 	/**
 	 * Distance (cm) from a *group* objective (squad objective / target base) within which a soldier

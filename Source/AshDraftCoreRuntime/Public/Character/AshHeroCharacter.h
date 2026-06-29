@@ -12,6 +12,7 @@ class UAshAbilitySystemComponent;
 class UAshAttributeSet;
 class UAshGameplayAbility;
 class UAshInputConfig;
+class UAnimSequenceBase;
 class UCameraComponent;
 class UInputMappingContext;
 class USpringArmComponent;
@@ -90,6 +91,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Ash|Health")
 	bool IsDead() const { return bIsDead; }
 
+	/**
+	 * Applies melee damage to the hero from a Mass soldier strike. Mirrors the general's entry point so
+	 * the Mass combat processor can damage the player the same way it damages a general (the soldier is a
+	 * Mass entity with no GAS context of its own). Drives Health straight on the attribute set.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Ash|Health")
+	void ReceiveSoldierDamage(float Amount, AActor* DamageInstigator);
+
 	/** Fired when the hero dies. The match loop binds here for the player-death defeat. */
 	UPROPERTY(BlueprintAssignable, Category = "Ash|Health")
 	FAshOnHeroDied OnHeroDied;
@@ -162,6 +171,14 @@ private:
 	/** Abilities granted on spawn (authority). Each carries the input tag it binds to. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Abilities", meta = (AllowPrivateAccess = "true"))
 	TArray<TSubclassOf<UAshGameplayAbility>> DefaultAbilities;
+
+	/**
+	 * Animation played once when the hero dies (Phase 27). A raw AnimSequence played in single-node mode
+	 * so it holds the final (downed) frame instead of blending back to idle. The player pawn is not
+	 * auto-removed (death is terminal defeat — the match flow owns the player pawn). Optional (null = none).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Abilities", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAnimSequenceBase> DeathAnim;
 
 	// Editor-tunable initial attribute values (ARCHITECTURE.md 17). Pushed into the
 	// attribute set base values when the ability system initializes.

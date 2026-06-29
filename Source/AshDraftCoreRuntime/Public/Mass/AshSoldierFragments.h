@@ -125,6 +125,14 @@ enum class EAshFireteamState : uint8
 	Moving,
 	Engaged,
 	Reforming,
+
+	/**
+	 * Global-combat march (Phase 24): the fireteam has a Battle assignment and is moving straight to its
+	 * designated enemy's ring slot, deliberately *ignoring* every other enemy in between. The soldier
+	 * behavior processor suppresses local hostile sensing while in this state so the squad does not get
+	 * dragged into side-skirmishes en route; it hands off to Engaged once it reaches the slot.
+	 */
+	Deploying,
 };
 
 /** Persistent 5-soldier fireteam identity below the general-owned squad. */
@@ -166,6 +174,19 @@ struct FAshFormationFragment : public FMassFragment
 
 	UPROPERTY()
 	EAshFireteamState FireteamState = EAshFireteamState::Standby;
+
+	/**
+	 * Centre of this fireteam's committed contact (the duel ring slot in a battle, else the matched
+	 * enemy squad's position). Written by the fireteam processor while Engaged; the behavior processor
+	 * anchors the melee chase leash here so the soldier-vs-soldier brawl stays a local bubble around the
+	 * contact point instead of dispersing across the map (Phase 26). Valid only when FireteamState is
+	 * Engaged (bHasContactAnchor).
+	 */
+	UPROPERTY()
+	FVector ContactAnchor = FVector::ZeroVector;
+
+	UPROPERTY()
+	bool bHasContactAnchor = false;
 };
 
 UENUM()
@@ -219,6 +240,16 @@ enum class EAshSoldierState : uint8
 
 	/** A local enemy is within attack range: hold position (anchored) and strike on cooldown. */
 	Attack,
+
+	/**
+	 * Committed to a target but assigned an OUTER (waiting) slot of its attack ring (Phase 28). Only the
+	 * first ActiveAttackerCount soldiers around any one target take inner slots and strike; the rest hold
+	 * an outer ring at a wider radius, slowly orbit, and menace (face the target) WITHOUT striking. This is
+	 * the Musou "crowd illusion": a few soldiers actually attack while the surplus circle threateningly, so
+	 * a target is surrounded readably instead of a swarm piling onto its exact point. A Surround soldier
+	 * is promoted to an inner slot (Engage/Attack) when one frees up (an inner attacker dies / retargets).
+	 */
+	Surround,
 };
 
 /** Current FSM state, written by the behavior processor and read by movement/combat (Phase 20). */
@@ -243,6 +274,16 @@ struct FAshSoldierStateFragment : public FMassFragment
 	/** True once EngageAnchor is set for the current engagement; cleared on returning to FollowSquad. */
 	UPROPERTY()
 	bool bEngaged = false;
+
+	/**
+	 * Angular slot bearing (radians, world space) of this soldier around its current target (Phase 28).
+	 * For an inner-ring soldier it tracks the live self->target bearing (it holds its own side as it
+	 * closes). For a Surround (outer-ring) soldier the behavior processor seeds it to the approach bearing
+	 * on entry and the movement processor then drifts it at SurroundOrbitSpeed each frame, so the waiting
+	 * ring slowly circles the target — the "waiting soldiers circle-around" motion the Musou look needs.
+	 */
+	UPROPERTY()
+	float SlotAngle = 0.f;
 };
 
 /** Combat state and tunables. Maps to UAshSoldierConfig attack fields. */
@@ -263,15 +304,27 @@ struct FAshCombatFragment : public FMassFragment
 	UPROPERTY()
 	float AttackRange = 0.f;
 
-	/** Seconds between attacks. */
+	/** Base seconds between attacks (the centre of the randomized cadence). */
 	UPROPERTY()
 	float AttackCooldown = 0.f;
+
+	/**
+	 * Fraction (0..1) the per-strike cooldown is randomized by, so soldiers don't all swing in lockstep
+	 * (Dynasty-Warriors-style staggered exchanges). RolledAttackInterval is drawn from
+	 * AttackCooldown * [1 - variance, 1 + variance] after each swing.
+	 */
+	UPROPERTY()
+	float AttackCooldownVariance = 0.f;
+
+	/** The actual cooldown in force for the current swing, re-rolled from the variance after every hit. */
+	UPROPERTY()
+	float RolledAttackInterval = 0.f;
 
 	/** Damage applied per successful attack. */
 	UPROPERTY()
 	float AttackPower = 0.f;
 
-	/** Seconds elapsed since the last attack; the combat processor gates against AttackCooldown. */
+	/** Seconds elapsed since the last attack; the combat processor gates against RolledAttackInterval. */
 	UPROPERTY()
 	float TimeSinceLastAttack = 0.f;
 };
@@ -297,6 +350,33 @@ struct FAshCombatEventFragment : public FMassFragment
 	/** Set the tick this soldier took damage; drives the proxy hit-react montage. */
 	UPROPERTY()
 	bool bWasHitThisTick = false;
+};
+
+/**
+ * Death / dying state (Phase 27). When a soldier's health first reaches zero the death processor does
+ * NOT destroy the entity immediately — it flips bIsDying and stamps DeathTime, so the soldier lingers
+ * as a corpse for a configurable display window (default 5 s) while its representation proxy plays the
+ * death montage. After the window the death processor reaps the entity. Keeping a zero-health entity
+ * alive is safe: every gameplay processor (movement / combat / behavior / fireteam / sensing) already
+ * gates on CurrentHealth > 0, so a dying soldier neither moves, fights, nor is targeted — it only
+ * animates. bDeathAnimStarted lets the representation processor trigger the montage exactly once.
+ */
+USTRUCT()
+struct FAshDeathFragment : public FMassFragment
+{
+	GENERATED_BODY()
+
+	/** Set by the death processor the first frame CurrentHealth hits zero; starts the corpse window. */
+	UPROPERTY()
+	bool bIsDying = false;
+
+	/** World time (s) death was registered; the entity is reaped DeathDisplayDuration seconds after this. */
+	UPROPERTY()
+	float DeathTime = 0.f;
+
+	/** Set once the representation proxy has kicked off the death montage, so it plays a single time. */
+	UPROPERTY()
+	bool bDeathAnimStarted = false;
 };
 
 /**

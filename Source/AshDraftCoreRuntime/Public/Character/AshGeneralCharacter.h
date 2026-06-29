@@ -15,6 +15,7 @@ class UAshAbilitySystemComponent;
 class UAshAttributeSet;
 class UAshGameplayAbility;
 class UAshGeneralConfig;
+class UAnimSequenceBase;
 class AAshBaseActor;
 struct FOnAttributeChangeData;
 
@@ -205,9 +206,19 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Attributes", meta = (AllowPrivateAccess = "true", ClampMin = "1.0"))
 	float InitialMaxStamina = 100.f;
 
-	/** Seconds the body persists after death before being destroyed (0 = keep). */
+	/** Seconds the body persists after death before being destroyed (0 = keep). The brief's "removed
+	 *  after 5 seconds"; the death montage plays over this window. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Health", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float DeathLifeSpan = 5.f;
+
+	/**
+	 * Animation played once when this general dies (Phase 27). A raw AnimSequence played in single-node
+	 * mode on HandleDeath: it **holds its final frame** (the downed pose) for the whole DeathLifeSpan
+	 * window instead of blending back to idle, then the body is destroyed. Optional (null = no death
+	 * animation, body still despawns).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Health", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAnimSequenceBase> DeathAnim;
 
 	/** Inline fallback attack range when Config is null. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))

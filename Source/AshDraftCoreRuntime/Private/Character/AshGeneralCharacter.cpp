@@ -5,6 +5,8 @@
 #include "AbilitySystem/AshAbilitySystemComponent.h"
 #include "AbilitySystem/AshAttributeSet.h"
 #include "AbilitySystem/AshGameplayAbility.h"
+#include "Animation/AnimSequenceBase.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "AI/AshCommanderSubsystem.h"
 #include "AI/AshGeneralConfig.h"
 #include "AI/AshGeneralController.h"
@@ -203,12 +205,18 @@ void AAshGeneralCharacter::SpawnTroops()
 
 	SquadId = GAshNextGeneralSquadId++;
 
+	// TroopCount is the number of 5-soldier squads (fireteams); the body is that many V-cells.
+	constexpr int32 FireteamSize = 5;
+	const int32 SquadCount = Config ? Config->TroopCount : 0;
+
 	AshMassSoldierSpawn::FAshSoldierSpawnParams Params;
 	Params.Config = Config ? Config->SoldierConfig : nullptr;
 	Params.TeamId = TeamId;
 	Params.SquadId = SquadId;
-	Params.Count = Config ? Config->TroopCount : 0;
+	Params.FireteamSize = FireteamSize;
+	Params.Count = SquadCount * FireteamSize;
 	Params.Origin = GetActorLocation();
+	Params.Forward = GetActorForwardVector();
 	Params.SpawnRadius = Config ? Config->TroopSpawnRadius : 800.f;
 
 	const int32 Num = AshMassSoldierSpawn::SpawnSoldiers(World, Params, TroopEntities);
@@ -256,7 +264,9 @@ void AAshGeneralCharacter::PublishSquadObjective(const FVector& Location, EAshSq
 	if (UAshSquadSubsystem* SquadSubsystem = World ? World->GetSubsystem<UAshSquadSubsystem>() : nullptr)
 	{
 		const float FormationRadius = Config ? Config->FormationRadius : 700.f;
-		SquadSubsystem->SetSquadObjective(SquadId, Order, Location, FormationRadius);
+		// Publish the general's own forward as the stable formation orientation so the troops form up
+		// along a fixed direction and settle, instead of orbiting the objective (Phase 27).
+		SquadSubsystem->SetSquadObjective(SquadId, Order, Location, FormationRadius, GetActorForwardVector());
 	}
 }
 
@@ -370,7 +380,9 @@ void AAshGeneralCharacter::PublishCombatObjectiveNear(AActor* Enemy)
 	{
 		const FVector CombatCenter = (GetActorLocation() + Enemy->GetActorLocation()) * 0.5f;
 		const float FormationRadius = Config ? Config->CombatFormationRadius : 250.f;
-		SquadSubsystem->SetSquadObjective(SquadId, EAshSquadOrder::AttackBase, CombatCenter, FormationRadius);
+		// Face the formation toward the enemy while engaging.
+		SquadSubsystem->SetSquadObjective(SquadId, EAshSquadOrder::AttackBase, CombatCenter, FormationRadius,
+			Enemy->GetActorLocation() - GetActorLocation());
 	}
 }
 
@@ -524,6 +536,16 @@ void AAshGeneralCharacter::HandleDeath()
 	{
 		MoveComp->StopMovementImmediately();
 		MoveComp->DisableMovement();
+	}
+
+	// Play the death animation over the despawn window (Phase 27). Single-node, non-looping playback on the
+	// mesh holds the final (downed) frame instead of blending back to idle; harmless if no anim/mesh is set.
+	if (DeathAnim)
+	{
+		if (USkeletalMeshComponent* DeathMesh = GetMesh())
+		{
+			DeathMesh->PlayAnimation(DeathAnim, /*bLooping=*/false);
+		}
 	}
 
 	// Remove from the operational registry so the commander stops planning around a dead general.

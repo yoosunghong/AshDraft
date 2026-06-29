@@ -72,7 +72,8 @@ public:
 	 * so a stopped, attacking soldier still faces its enemy. Velocity is used only to drive locomotion
 	 * animation speed, no longer to derive facing (Phase 20).
 	 */
-	void SyncFromEntity(const FVector& Position, float FacingYaw, const FVector& Velocity, float HealthFraction);
+	void SyncFromEntity(const FVector& Position, float FacingYaw, const FVector& Velocity, float HealthFraction,
+		bool bInCombatStance = false);
 
 	/** Reads the proxy's current world location back out (for demotion transfer). */
 	FVector GetSyncedLocation() const;
@@ -89,6 +90,15 @@ public:
 
 	/** Plays the current visual set's hit-react montage (no-op if none); driven by a Mass hit event. */
 	void PlayHitReactMontage();
+
+	/**
+	 * Plays the current visual set's death animation in single-node mode (Phase 27): `PlayAnimation`
+	 * non-looping bypasses the AnimBP and **holds the final frame** (the downed pose) until the proxy is
+	 * recycled — so the body never blends back to idle while the corpse lingers. Also disables the
+	 * query-only hit capsule so a corpse can't be struck again. Driven once by the representation processor
+	 * the frame the entity starts dying. No-op if the visual set has no DeathAnim.
+	 */
+	void PlayDeath();
 
 protected:
 	/**

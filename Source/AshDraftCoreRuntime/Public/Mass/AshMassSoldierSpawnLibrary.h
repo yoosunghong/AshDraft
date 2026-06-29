@@ -35,14 +35,24 @@ namespace AshMassSoldierSpawn
 		/** Squad id stamped on every entity (FAshSquadFragment::SquadId). */
 		int32 SquadId = 0;
 
-		/** How many entities to create. */
+		/** How many entities to create. Each block of FireteamSize entities forms one fireteam. */
 		int32 Count = 0;
 
-		/** Centre of the scatter disc (usually the spawner / general location). */
+		/** Soldiers per fireteam (the V-formation cell). A "squad" of generals is a body of these. */
+		int32 FireteamSize = 5;
+
+		/** Centre of the deployment area (usually the spawner / general location). */
 		FVector Origin = FVector::ZeroVector;
 
-		/** Radius (cm) of the scatter disc around Origin. */
+		/**
+		 * Radius (cm) of the deployment area around Origin. Fireteams are distributed across this area
+		 * (each at its own cluster) rather than every soldier scattered randomly, so squads start spread
+		 * out instead of intermixed on one point.
+		 */
 		float SpawnRadius = 2000.f;
+
+		/** Planar facing the V formations are oriented along at spawn (usually the general's forward). */
+		FVector Forward = FVector::ForwardVector;
 
 		// Inline fallbacks used only when Config is null (mirror UAshMassSoldierConfig defaults).
 		float FallbackMaxHealth = 50.f;
@@ -50,6 +60,7 @@ namespace AshMassSoldierSpawn
 		float FallbackAttackRange = 150.f;
 		float FallbackAttackPower = 10.f;
 		float FallbackAttackCooldown = 1.5f;
+		float FallbackAttackCooldownVariance = 0.4f;
 	};
 
 	/**
