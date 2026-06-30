@@ -7,6 +7,7 @@
 #include "Mass/EntityHandle.h"
 #include "AI/AshGeneralTypes.h"
 #include "AI/AshSquadTypes.h"
+#include "Hero/AshHeroConfig.h"
 #include "Teams/AshTeamTypes.h"
 #include "Teams/AshTeamAgentInterface.h"
 #include "AshGeneralCharacter.generated.h"
@@ -14,9 +15,13 @@
 class UAshAbilitySystemComponent;
 class UAshAttributeSet;
 class UAshGameplayAbility;
-class UAshGeneralConfig;
+class UAshHeroConfig;
+class UAshUnitHealthBarWidget;
 class UAnimSequenceBase;
+class UTexture2D;
+class UWidgetComponent;
 class AAshBaseActor;
+class APawn;
 struct FOnAttributeChangeData;
 
 /** Broadcast once when a general's health first reaches zero (event-driven death). */
@@ -32,7 +37,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FAshOnGeneralCharacterDied, AAshGene
  * (via AAshGeneralController) instead of a Behavior Tree.
  *
  * Responsibilities:
- *  - **Troops:** on BeginPlay it spawns Config->TroopCount Mass soldiers into a squad it owns and
+ *  - **Troops:** on BeginPlay it spawns HeroConfig->TroopCount Mass soldiers into a squad it owns and
  *    registers that squad + itself with the squad / general subsystems.
  *  - **Following:** each operational tick its StateTree calls PublishSquadObjective so the troops'
  *    shared objective tracks the general's live position (the soldiers' existing follow/engage/return
@@ -67,19 +72,35 @@ public:
 
 	//~IAshTeamAgentInterface
 	virtual EAshTeamId GetAshTeamId() const override { return TeamId; }
+	virtual FText GetAshDisplayName() const override { return DisplayName; }
+	virtual UTexture2D* GetAshPortrait() const override;
 	//~End of IAshTeamAgentInterface
 
 	/** Team identity. */
 	UFUNCTION(BlueprintPure, Category = "Ash|Team")
 	EAshTeamId GetTeamId() const { return TeamId; }
 
-	/** Data-driven archetype (troops, radii, StateTree, LOD). May be null (inline fallbacks used). */
+	/** Unified hero archetype (stats, troops, radii, StateTree, LOD). May be null (inline fallbacks used). */
 	UFUNCTION(BlueprintPure, Category = "Ash|General")
-	UAshGeneralConfig* GetConfig() const { return Config; }
+	UAshHeroConfig* GetConfig() const { return HeroConfig; }
 
 	/** Squad id this general commands. */
 	UFUNCTION(BlueprintPure, Category = "Ash|General")
 	int32 GetSquadId() const { return SquadId; }
+
+	// --- Morale (drives the troops' combo chances; Phase 29) ---
+
+	/** Current morale level (1..MaxMoraleLevel from the config). */
+	UFUNCTION(BlueprintPure, Category = "Ash|General|Morale")
+	int32 GetMoraleLevel() const { return MoraleLevel; }
+
+	/**
+	 * Sets the general's morale (clamped to 1..MaxMoraleLevel) and re-stamps every living troop's combo
+	 * chances so soldiers immediately fight to the new morale. Call from any future morale system; the
+	 * combo probabilities scale linearly with the level (see UAshHeroConfig::Max*ComboChance).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Ash|General|Morale")
+	void SetMoraleLevel(int32 NewLevel);
 
 	/** Current/max health from the GAS attribute set. */
 	UFUNCTION(BlueprintPure, Category = "Ash|Health")
@@ -158,6 +179,9 @@ public:
 	/** Classifies LOD from player distance, applies the matching think-rate, returns the level. */
 	int32 UpdateThinkLOD(float DistanceToPlayer);
 
+	/** Lets the player slide past this non-player hero, then returns it to its base spot if shoved too far. */
+	void UpdatePlayerPathDisplacement(float DeltaTime, const APawn* PlayerPawn);
+
 protected:
 	/** Binds actor info, seeds attributes, and grants abilities (authority only). */
 	void InitializeAbilitySystem();
@@ -166,6 +190,9 @@ protected:
 
 	/** Spawns the general's troops and registers its squad (BeginPlay). */
 	void SpawnTroops();
+
+	/** Computes the per-soldier 2-hit / 3-hit combo chances for the current morale level (Phase 29). */
+	void ComputeComboChances(float& OutTwoHitChance, float& OutThreeHitChance) const;
 
 	/** Recomputes the sensed enemy / stronghold from the registries (cheap, throttled by think-rate). */
 	void RefreshSensing();
@@ -181,16 +208,37 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ash|Abilities", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAshAbilitySystemComponent> AbilitySystemComponent;
 
+	/**
+	 * Screen-space health bar shown above the general's head. Driven automatically from the GAS
+	 * health attribute — no Blueprint graph wiring needed. Assign HealthBarWidgetClass to activate.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ash|UI", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWidgetComponent> HealthBarWidget;
+
+	/** Widget class to spawn in HealthBarWidget. Set to WBP_AshUnitHealthBar on each general BP. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UI", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UUserWidget> HealthBarWidgetClass;
+
 	UPROPERTY()
 	TObjectPtr<UAshAttributeSet> AttributeSet;
 
-	/** Data-driven archetype. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UAshGeneralConfig> Config;
+	/**
+	 * Unified hero archetype asset (DA_Hero_*).
+	 * Assign when this adapter is the AI-controlled allied/enemy version of a hero.
+	 * When set, HeroConfig base stats override the Initial* floats below for InitializeAttributes(),
+	 * keeping the AI instance's stats consistent with the hero archetype's definition.
+	 * The player's FAshHeroStatBonuses are NOT applied here — the AI always uses base stats only.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Hero", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAshHeroConfig> HeroConfig;
 
 	/** Team identity. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Team", meta = (AllowPrivateAccess = "true"))
 	EAshTeamId TeamId = EAshTeamId::Enemy;
+
+	/** Display name for UI (the HUD's recently-struck panel, Phase 30). Empty falls back to a generic label. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UI", meta = (AllowPrivateAccess = "true"))
+	FText DisplayName;
 
 	/** Abilities granted on possession (each carries the input tag it binds to). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Abilities", meta = (AllowPrivateAccess = "true"))
@@ -220,9 +268,31 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Health", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAnimSequenceBase> DeathAnim;
 
-	/** Inline fallback attack range when Config is null. */
+	/** Inline fallback attack range when HeroConfig is null. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float FallbackAttackRange = 175.f;
+
+	// --- Player path yielding (mirrors Mass soldier player displacement) ---
+
+	/** Radius around the player where this non-player hero yields sideways instead of blocking the path. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|PlayerPush", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float PlayerPushRadius = 180.f;
+
+	/** Speed applied while yielding out of the player's path. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|PlayerPush", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float PlayerPushSpeed = 850.f;
+
+	/** Maximum distance from the last stable base before the hero is forced to return. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|PlayerPush", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float MaxPlayerForcedDisplacement = 500.f;
+
+	/** Return speed after the player has shoved the hero beyond MaxPlayerForcedDisplacement. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|PlayerPush", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float ForcedReturnSpeed = 700.f;
+
+	/** Seconds after the last push before the current location may become the new stable base. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|General|PlayerPush", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float PlayerPushBaseHoldSeconds = 0.35f;
 
 	// --- Runtime state ---
 
@@ -231,6 +301,9 @@ private:
 
 	/** Squad id stamped on the troops (allocated on spawn). */
 	int32 SquadId = INDEX_NONE;
+
+	/** Current morale level (1..HeroConfig->MaxMoraleLevel); seeded from the hero config, settable at runtime. */
+	int32 MoraleLevel = 3;
 
 	/** Id in UAshGeneralSubsystem. */
 	int32 GeneralId = INDEX_NONE;
@@ -250,6 +323,15 @@ private:
 
 	/** Current actor LOD level (0 = near .. 3 = far). */
 	int32 CurrentLODLevel = 0;
+
+	/** Last stable position used by player path yielding. */
+	FVector PlayerDisplacementBasePosition = FVector::ZeroVector;
+
+	/** True while this general is being forced back to PlayerDisplacementBasePosition. */
+	bool bReturningToPlayerDisplacementBase = false;
+
+	/** World time of the most recent player shove. */
+	float LastPlayerPushTime = -1.e30f;
 
 	/** Guards. */
 	bool bAbilitiesGranted = false;

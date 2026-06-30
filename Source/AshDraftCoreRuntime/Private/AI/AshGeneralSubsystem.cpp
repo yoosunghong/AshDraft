@@ -4,7 +4,9 @@
 
 #include "Character/AshGeneralCharacter.h"
 #include "Engine/World.h"
+#include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
+#include "Performance/AshPerfStatics.h"
 #include "TimerManager.h"
 
 void UAshGeneralSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -14,7 +16,12 @@ void UAshGeneralSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	// Drive actor AI-LOD from a single repeating timer rather than per-general Tick (18.3). Generals
 	// register during their own BeginPlay, so by the time this fires the registry is populated.
 	InWorld.GetTimerManager().SetTimer(
-		LODTimerHandle, this, &UAshGeneralSubsystem::UpdateGeneralLODs, LODUpdatePeriod, /*bLoop=*/true);
+		LODTimerHandle, this, &UAshGeneralSubsystem::UpdateGeneralLODs, LODUpdatePeriod, /*bLoop=*/true, 0.f);
+
+	LastPlayerDisplacementUpdateTime = InWorld.GetTimeSeconds();
+	InWorld.GetTimerManager().SetTimer(
+		PlayerDisplacementTimerHandle, this, &UAshGeneralSubsystem::UpdateGeneralPlayerDisplacement,
+		PlayerDisplacementUpdatePeriod, /*bLoop=*/true, 0.f);
 }
 
 void UAshGeneralSubsystem::Deinitialize()
@@ -22,6 +29,7 @@ void UAshGeneralSubsystem::Deinitialize()
 	if (const UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(LODTimerHandle);
+		World->GetTimerManager().ClearTimer(PlayerDisplacementTimerHandle);
 	}
 
 	Super::Deinitialize();
@@ -39,6 +47,16 @@ int32 UAshGeneralSubsystem::RegisterGeneral(AAshGeneralCharacter* General, EAshT
 	State.Order = EAshSquadOrder::None;
 	State.bHasObjective = false;
 	State.LODLevel = 0;
+
+	if (General)
+	{
+		const UWorld* World = GetWorld();
+		const APawn* PlayerPawn = World ? UGameplayStatics::GetPlayerPawn(World, 0) : nullptr;
+		const float Distance = (AshPerf::IsLODEnabled() && PlayerPawn)
+			? FVector::Dist(General->GetActorLocation(), PlayerPawn->GetActorLocation())
+			: 0.f;
+		State.LODLevel = General->UpdateThinkLOD(Distance);
+	}
 
 	return GeneralId;
 }
@@ -121,6 +139,7 @@ void UAshGeneralSubsystem::UpdateGeneralLODs()
 	const APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(World, 0);
 	const FVector PlayerLocation = PlayerPawn ? PlayerPawn->GetActorLocation() : FVector::ZeroVector;
 	const bool bHasPlayer = PlayerPawn != nullptr;
+	const bool bLODEnabled = AshPerf::IsLODEnabled();
 
 	for (TPair<int32, FAshGeneralState>& Pair : Generals)
 	{
@@ -130,11 +149,40 @@ void UAshGeneralSubsystem::UpdateGeneralLODs()
 			continue;
 		}
 
-		// No player (e.g. headless QA) -> keep generals at full fidelity so sim stays correct.
-		const float Distance = bHasPlayer
+		// LOD disabled or no player (e.g. headless QA) -> full fidelity so sim stays correct.
+		const float Distance = bLODEnabled && bHasPlayer
 			? FVector::Dist(General->GetActorLocation(), PlayerLocation)
 			: 0.f;
 
 		Pair.Value.LODLevel = General->UpdateThinkLOD(Distance);
+	}
+}
+
+void UAshGeneralSubsystem::UpdateGeneralPlayerDisplacement()
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const float Now = World->GetTimeSeconds();
+	const float DeltaTime = LastPlayerDisplacementUpdateTime > 0.f
+		? FMath::Clamp(Now - LastPlayerDisplacementUpdateTime, 0.f, 0.1f)
+		: PlayerDisplacementUpdatePeriod;
+	LastPlayerDisplacementUpdateTime = Now;
+
+	const APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(World, 0);
+	if (!PlayerPawn)
+	{
+		return;
+	}
+
+	for (TPair<int32, FAshGeneralState>& Pair : Generals)
+	{
+		if (AAshGeneralCharacter* General = Pair.Value.General.Get())
+		{
+			General->UpdatePlayerPathDisplacement(DeltaTime, PlayerPawn);
+		}
 	}
 }

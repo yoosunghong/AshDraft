@@ -108,7 +108,7 @@ protected:
 	float FallbackAttackPower = 10.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|MassSoldier|Fallback", meta = (ClampMin = "0.05"))
-	float FallbackAttackCooldown = 1.5f;
+	float FallbackAttackCooldown = 3.0f;
 
 private:
 	/** Draws one debug point per spawned entity for verification. */

@@ -102,7 +102,7 @@ private:
 	/** Replan cadence used before any general (with a config) exists. */
 	static constexpr float DefaultReplanPeriod = 0.5f;
 
-	/** Fallbacks used when a participating general carries no UAshGeneralConfig. */
+	/** Fallbacks used when a participating non-player hero carries no UAshHeroConfig. */
 	static constexpr float DefaultEncounterRadius = 3000.f;
 	static constexpr float DefaultDuelRingRadius = 1400.f;
 	static constexpr int32 DefaultMaxAttackersPerEnemy = 2;

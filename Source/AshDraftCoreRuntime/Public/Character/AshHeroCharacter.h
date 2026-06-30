@@ -4,6 +4,7 @@
 
 #include "AbilitySystemInterface.h"
 #include "GameFramework/Character.h"
+#include "Hero/AshHeroProgressionData.h"
 #include "Teams/AshTeamTypes.h"
 #include "Teams/AshTeamAgentInterface.h"
 #include "AshHeroCharacter.generated.h"
@@ -11,11 +12,13 @@
 class UAshAbilitySystemComponent;
 class UAshAttributeSet;
 class UAshGameplayAbility;
+class UAshHeroConfig;
 class UAshInputConfig;
 class UAnimSequenceBase;
 class UCameraComponent;
 class UInputMappingContext;
 class USpringArmComponent;
+class UTexture2D;
 struct FGameplayTag;
 struct FInputActionValue;
 struct FOnAttributeChangeData;
@@ -63,6 +66,18 @@ public:
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 	//~End of IAbilitySystemInterface
 
+	/** Hero archetype asset. May be null when using the legacy Initial* workflow. */
+	UFUNCTION(BlueprintPure, Category = "Ash|Hero")
+	UAshHeroConfig* GetHeroConfig() const { return HeroConfig; }
+
+	/**
+	 * Applies (or replaces) the player's stat bonuses and re-seeds GAS base values immediately.
+	 * Call this after loading a save game to reflect the player's current progression without
+	 * needing to re-possess the character.  Requires HeroConfig to be set; does nothing otherwise.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Ash|Hero")
+	void ApplyStatBonuses(const FAshHeroStatBonuses& NewBonuses);
+
 	/** Current team this hero belongs to (placeholder identity until GAS/team subsystem in later phases). */
 	UFUNCTION(BlueprintPure, Category = "Ash|Team")
 	EAshTeamId GetTeamId() const { return TeamId; }
@@ -73,6 +88,8 @@ public:
 
 	//~IAshTeamAgentInterface
 	virtual EAshTeamId GetAshTeamId() const override { return TeamId; }
+	virtual FText GetAshDisplayName() const override { return DisplayName; }
+	virtual UTexture2D* GetAshPortrait() const override;
 	//~End of IAshTeamAgentInterface
 
 	/** Current health, read from the GAS AttributeSet. */
@@ -144,6 +161,24 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ash|Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCameraComponent> FollowCamera;
 
+	/**
+	 * Hero archetype asset (DA_Hero_*).  Defines base stats shared by the player-controlled instance
+	 * and any AI-controlled (enemy) version of the same hero.  When set, base values in this asset
+	 * take precedence over the legacy Initial* floats below; FAshHeroStatBonuses are added on top.
+	 * Leave null to keep the old per-Blueprint Initial* workflow.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Hero", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAshHeroConfig> HeroConfig;
+
+	/**
+	 * Player progression bonuses applied on top of HeroConfig base stats.
+	 * In the PoC set these directly on the hero Blueprint / instance to simulate upgrades.
+	 * In a shipping game, load from a USaveGame and call ApplyStatBonuses() after possession.
+	 * Has no effect when HeroConfig is null (the legacy Initial* floats are used instead).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ash|Hero", meta = (AllowPrivateAccess = "true"))
+	FAshHeroStatBonuses StatBonuses;
+
 	/** Data-driven Input Action <-> tag map (Lyra-style). Move/Look are read from NativeInputActions. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Input", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<const UAshInputConfig> InputConfig;
@@ -159,6 +194,10 @@ private:
 	/** Team identity (data-tunable on the instance/Blueprint). Defaults to the player team. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Team", meta = (AllowPrivateAccess = "true"))
 	EAshTeamId TeamId = EAshTeamId::Player;
+
+	/** Display name for UI (Phase 30). Empty falls back to a generic label. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UI", meta = (AllowPrivateAccess = "true"))
+	FText DisplayName;
 
 	/** GAS ability system component owned by this hero (single-player PoC: ASC on the avatar). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ash|Abilities", meta = (AllowPrivateAccess = "true"))

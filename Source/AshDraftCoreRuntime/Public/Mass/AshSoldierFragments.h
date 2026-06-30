@@ -304,29 +304,69 @@ struct FAshCombatFragment : public FMassFragment
 	UPROPERTY()
 	float AttackRange = 0.f;
 
-	/** Base seconds between attacks (the centre of the randomized cadence). */
+	/**
+	 * Base seconds between *attack cycles* (the centre of the randomized cadence). One cycle is a 1-3 hit
+	 * combo; the cooldown is applied after the whole combo lands, so soldiers default to a 3 s cycle
+	 * (Phase 29). RolledAttackInterval is drawn from this each cycle.
+	 */
 	UPROPERTY()
 	float AttackCooldown = 0.f;
 
 	/**
-	 * Fraction (0..1) the per-strike cooldown is randomized by, so soldiers don't all swing in lockstep
+	 * Fraction (0..1) the per-cycle cooldown is randomized by, so soldiers don't all swing in lockstep
 	 * (Dynasty-Warriors-style staggered exchanges). RolledAttackInterval is drawn from
-	 * AttackCooldown * [1 - variance, 1 + variance] after each swing.
+	 * AttackCooldown * [1 - variance, 1 + variance] after each attack cycle.
 	 */
 	UPROPERTY()
 	float AttackCooldownVariance = 0.f;
 
-	/** The actual cooldown in force for the current swing, re-rolled from the variance after every hit. */
+	/** The actual cooldown in force for the current cycle, re-rolled from the variance after every combo. */
 	UPROPERTY()
 	float RolledAttackInterval = 0.f;
 
-	/** Damage applied per successful attack. */
+	/** Damage applied per successful hit (each hit of a 1-3 hit combo applies this). */
 	UPROPERTY()
 	float AttackPower = 0.f;
 
-	/** Seconds elapsed since the last attack; the combat processor gates against RolledAttackInterval. */
+	/** Seconds elapsed since the last attack cycle ended; the combat processor gates the next cycle on RolledAttackInterval. */
 	UPROPERTY()
 	float TimeSinceLastAttack = 0.f;
+
+	// --- Morale-driven combo (Phase 29) ---
+
+	/**
+	 * Probability (0..1) this soldier extends an attack cycle to a 2-hit combo. Seeded from the owning
+	 * general's morale (max 20% at morale 5, scaled linearly by level); 0 for soldiers with no general.
+	 */
+	UPROPERTY()
+	float TwoHitChance = 0.f;
+
+	/**
+	 * Probability (0..1) this soldier extends an attack cycle to a full 3-hit combo (checked before the
+	 * 2-hit roll). Seeded from morale (max 10% at morale 5, scaled linearly by level); 0 with no general.
+	 */
+	UPROPERTY()
+	float ThreeHitChance = 0.f;
+
+	/** Seconds between consecutive hits of one combo (montage-paced). Seeds the burst cadence. */
+	UPROPERTY()
+	float ComboHitInterval = 0.45f;
+
+	/**
+	 * Combo length chosen at the start of the current cycle: 0 = not mid-combo (idle or on cooldown),
+	 * else 1-3 hits to land this cycle. The combat processor rolls this from the chances when a cycle
+	 * begins and clears it back to 0 when the last hit lands (or the target is lost).
+	 */
+	UPROPERTY()
+	int32 ComboLength = 0;
+
+	/** Hits already landed in the current combo (0..ComboLength). */
+	UPROPERTY()
+	int32 ComboHitsLanded = 0;
+
+	/** Seconds since the last combo hit; gates the next hit of a multi-hit combo against ComboHitInterval. */
+	UPROPERTY()
+	float TimeSinceComboHit = 0.f;
 };
 
 /**
@@ -346,6 +386,14 @@ struct FAshCombatEventFragment : public FMassFragment
 	/** Set the tick this soldier landed an attack; drives the proxy attack montage. */
 	UPROPERTY()
 	bool bAttackedThisTick = false;
+
+	/**
+	 * Which hit of the current combo just landed (0-based; Phase 29). Valid only when bAttackedThisTick
+	 * is set; the representation processor uses it to pick UAshSoldierVisualConfig::AttackComboMontages[i]
+	 * (falling back to the single AttackMontage when no per-hit montage is authored).
+	 */
+	UPROPERTY()
+	int32 AttackComboIndex = 0;
 
 	/** Set the tick this soldier took damage; drives the proxy hit-react montage. */
 	UPROPERTY()

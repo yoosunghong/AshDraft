@@ -10,6 +10,8 @@
 class USceneComponent;
 class USkeletalMeshComponent;
 class UCapsuleComponent;
+class UWidgetComponent;
+class UUserWidget;
 class UAnimMontage;
 class UAshSoldierVisualConfig;
 
@@ -85,22 +87,30 @@ public:
 	 */
 	void ConfigureVisual(const UAshSoldierVisualConfig* Visual);
 
-	/** Plays the current visual set's attack montage (no-op if none); driven by a Mass attack event. */
-	void PlayAttackMontage();
+	/**
+	 * Plays the attack montage for combo hit ComboIndex (Phase 29): the current visual set's
+	 * AttackComboMontages[ComboIndex] if authored, else the single AttackMontage. Driven by a Mass attack
+	 * event (FAshCombatEventFragment::AttackComboIndex); no-op if no montage resolves.
+	 */
+	void PlayAttackMontage(int32 ComboIndex);
 
 	/** Plays the current visual set's hit-react montage (no-op if none); driven by a Mass hit event. */
 	void PlayHitReactMontage();
 
 	/**
-	 * Plays the current visual set's death animation in single-node mode (Phase 27): `PlayAnimation`
-	 * non-looping bypasses the AnimBP and **holds the final frame** (the downed pose) until the proxy is
-	 * recycled — so the body never blends back to idle while the corpse lingers. Also disables the
-	 * query-only hit capsule so a corpse can't be struck again. Driven once by the representation processor
-	 * the frame the entity starts dying. No-op if the visual set has no DeathAnim.
+	 * Plays the current visual set's DeathMontage and flags the AnimBP as dead (Phase 27/29): Montage_Play
+	 * drives the death motion and UAshSoldierAnimInstance::bIsDead lets the AnimBP transition to a Dead state
+	 * that **holds the downed pose** for the corpse window (a montage alone blends back out). Also disables
+	 * the query-only hit capsule so a corpse can't be struck again. Driven once by the representation
+	 * processor the frame the entity starts dying. No-op if the visual set has no DeathMontage.
 	 */
 	void PlayDeath();
 
 protected:
+	//~AActor interface
+	virtual void OnConstruction(const FTransform& Transform) override;
+	//~End of AActor interface
+
 	/**
 	 * Facing root. SyncFromEntity rotates THIS (not the mesh) to face movement, keeping the entity's
 	 * heading separate from the mesh's art-correction offset. Making the mesh the root caused the
@@ -126,11 +136,49 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ash|Proxy", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCapsuleComponent> HitCapsule;
 
+	/**
+	 * Over-head unit health bar (Phase 30). A screen-space UWidgetComponent that shows the soldier's
+	 * health (cyan for the player's side, red for the enemy). Because a proxy only exists while its
+	 * entity is promoted near the player (representation LOD), the bar is automatically shown only
+	 * "together with the mesh when it is rendered" and far soldiers pay no widget cost. The widget
+	 * CLASS is assigned on the B_Soldier_Proxy Blueprint (a WBP child of UAshUnitHealthBarWidget); this
+	 * component is empty by default so the proxy stays data-driven. SyncFromEntity pushes health/team in.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ash|Proxy", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWidgetComponent> HealthBarWidget;
+
+	/** Compact draw size for ordinary soldier health bars. Generals use their own larger component size. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ash|Proxy|UI", meta = (AllowPrivateAccess = "true", ClampMin = "1.0"))
+	FVector2D HealthBarDrawSize = FVector2D(30.f, 6.f);
+
+	/** Upper bound applied to soldier bars so stale Blueprint defaults cannot make them hero-sized. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ash|Proxy|UI", meta = (AllowPrivateAccess = "true", ClampMin = "1.0"))
+	FVector2D MaxHealthBarDrawSize = FVector2D(30.f, 8.f);
+
+	/**
+	 * Soldier-specific widget class. Keep this on the native compact widget unless intentionally testing
+	 * another soldier-only presentation; generals use their own larger widget component/class.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ash|Proxy|UI", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UUserWidget> DefaultHealthBarWidgetClass;
+
 	/** Min planar speed (cm/s) before the proxy reorients to face its movement direction. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ash|Proxy", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float FacingSpeedThreshold = 10.f;
 
 private:
+	/** Applies health-bar presentation defaults to the widget component. */
+	void ApplyHealthBarPresentation();
+
+	/** Ensures the health bar has a widget class even if the proxy Blueprint component was left unset. */
+	void EnsureHealthBarWidgetClass();
+
+	/** Shows ordinary soldier health only for enemy-team proxies. */
+	bool ShouldShowHealthBar() const;
+
+	/** Applies the current enemy-only visibility rule to the health bar component and widget. */
+	void ApplyHealthBarVisibility();
+
 	/** Plays a montage on the mesh's anim instance (no-op if null). */
 	void PlayMontage(UAnimMontage* Montage);
 

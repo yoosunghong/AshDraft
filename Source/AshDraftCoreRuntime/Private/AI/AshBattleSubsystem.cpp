@@ -4,7 +4,6 @@
 
 #include "AI/AshEngagementMatcher.h"
 #include "AI/AshFireteamSubsystem.h"
-#include "AI/AshGeneralConfig.h"
 #include "AI/AshGeneralSubsystem.h"
 #include "Character/AshGeneralCharacter.h"
 #include "DrawDebugHelpers.h"
@@ -28,7 +27,7 @@ namespace
 		int32 SquadId = INDEX_NONE;
 		EAshTeamId TeamId = EAshTeamId::Neutral;
 		FVector Position = FVector::ZeroVector;
-		const UAshGeneralConfig* Config = nullptr;
+		const UAshHeroConfig* Config = nullptr;
 	};
 
 	/** Minimal union-find over a small general array for clustering encounters into battles. */

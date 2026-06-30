@@ -30,4 +30,18 @@ class IAshTeamAgentInterface
 public:
 	/** This agent's battlefield team. */
 	virtual EAshTeamId GetAshTeamId() const = 0;
+
+	/**
+	 * Human-readable name for UI (the HUD's recently-struck-enemy panel, Phase 30). Optional: the
+	 * default is empty, and callers fall back to a generic team-based label, so existing implementers
+	 * need no change.
+	 */
+	virtual FText GetAshDisplayName() const { return FText::GetEmpty(); }
+
+	/**
+	 * Optional portrait texture for the target-info panel (Phase 30). Returns null by default;
+	 * implement in hero/general characters that carry a UAshHeroConfig with a Portrait asset.
+	 * Callers guard for null so implementers may return null freely.
+	 */
+	virtual UTexture2D* GetAshPortrait() const { return nullptr; }
 };

@@ -102,6 +102,7 @@ int32 AshMassSoldierSpawn::SpawnSoldiers(
 	const float AttackPower    = Config ? Config->AttackPower    : Params.FallbackAttackPower;
 	const float AttackCooldown = Config ? Config->AttackCooldown : Params.FallbackAttackCooldown;
 	const float AttackCooldownVariance = Config ? Config->AttackCooldownVariance : Params.FallbackAttackCooldownVariance;
+	const float ComboHitInterval = Config ? Config->ComboHitInterval : Params.FallbackComboHitInterval;
 
 	UAshSoldierVisualConfig* VisualConfig = Config ? Config->Visual : nullptr;
 	UAshSoldierBehaviorConfig* BehaviorConfig = Config ? Config->Behavior : nullptr;
@@ -178,6 +179,10 @@ int32 AshMassSoldierSpawn::SpawnSoldiers(
 		Combat.AttackCooldownVariance = FMath::Clamp(AttackCooldownVariance, 0.f, 1.f);
 		Combat.RolledAttackInterval = AttackCooldown;
 		Combat.TimeSinceLastAttack = AttackCooldown; // ready to attack immediately
+		// Morale-driven combo (Phase 29): pacing from the unit type, chances from the owning general.
+		Combat.ComboHitInterval = ComboHitInterval;
+		Combat.TwoHitChance = FMath::Clamp(Params.TwoHitChance, 0.f, 1.f);
+		Combat.ThreeHitChance = FMath::Clamp(Params.ThreeHitChance, 0.f, 1.f);
 
 		EntityManager.GetFragmentDataChecked<FAshVisualFragment>(Entity).Visual = VisualConfig;
 		EntityManager.GetFragmentDataChecked<FAshBehaviorFragment>(Entity).Behavior = BehaviorConfig;

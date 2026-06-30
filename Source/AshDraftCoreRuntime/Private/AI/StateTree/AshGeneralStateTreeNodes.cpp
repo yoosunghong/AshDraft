@@ -3,7 +3,6 @@
 #include "AI/StateTree/AshGeneralStateTreeNodes.h"
 
 #include "AIController.h"
-#include "AI/AshGeneralConfig.h"
 #include "Character/AshGeneralCharacter.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "StateTreeExecutionContext.h"
@@ -115,7 +114,7 @@ EStateTreeRunStatus FAshSTTask_AttackTarget::Tick(FStateTreeExecutionContext& Co
 		Inst.CurrentAttackTargetTime += DeltaTime;
 	}
 
-	const UAshGeneralConfig* Config = General->GetConfig();
+	const UAshHeroConfig* Config = General->GetConfig();
 	const float RetargetSeconds = Config ? Config->PlayerChaseRetargetSeconds : 5.f;
 	if (RetargetSeconds > 0.f
 		&& Inst.CurrentAttackTargetTime >= RetargetSeconds

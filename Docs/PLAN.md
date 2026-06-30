@@ -356,3 +356,88 @@
     a lone general a few soldiers strike while the rest circle and menace; a balanced army clash still
     pairs off without piling. Optional: branch the minion AnimBP idle on `bInCombatStance` for a guard pose.
 
+- [ ] Phase 29: Mass Soldier Combo Attacks (morale-driven) + Idle / Death Animation fixes
+  - **IMPLEMENTED (code); build verified; PENDING USER editor/AnimBP + PIE.** Two field requests.
+  - **Combo attacks (1–3 hits per cycle, morale-driven).** A soldier's attack is now an *attack cycle* of
+    1–3 quick hits instead of one swing. The chance scales linearly with the owning **general's morale**
+    (level 1–5): up to **10%** for a 3-hit and **20%** for a 2-hit at morale 5 (e.g. morale 3 → 6% / 12%).
+    The combat processor (`UAshMassCombatProcessor`) runs a per-soldier combo state machine: roll the
+    length at cycle start, land hits paced by `ComboHitInterval` (data, 0.45 s), each hit deals
+    `AttackPower` and plays its own montage; the cycle ends into the **3 s** default cooldown. New
+    `FAshCombatFragment` fields (`TwoHitChance`/`ThreeHitChance`/`ComboHitInterval`/`ComboLength`/
+    `ComboHitsLanded`/`TimeSinceComboHit`) + `FAshCombatEventFragment::AttackComboIndex`.
+  - **Morale on the general.** `UAshGeneralConfig` gains `InitialMoraleLevel` (1–5, default 3),
+    `MaxMoraleLevel`, `MaxTwoHitComboChance` (0.20), `MaxThreeHitComboChance` (0.10).
+    `AAshGeneralCharacter` holds `MoraleLevel` with `GetMoraleLevel()`/`SetMoraleLevel()` (re-stamps the
+    troops' chances) and stamps the chances onto each soldier at spawn. No gain/loss progression invented —
+    `SetMoraleLevel()` is the seam for a future morale system. Plain spawner soldiers (no general) → 0
+    chance (single hits).
+  - **3 s cooldown + attack-slot return.** `AttackCooldown` defaults to **3.0** (`UAshMassSoldierConfig`,
+    spawner + spawn-library fallbacks). After a cycle a soldier is "idle on cooldown"; the behavior
+    processor (`UAshMassSoldierBehaviorProcessor`) treats it as a non-active striker (`bActiveStriker`), so
+    it **yields its inner attack slot** to a waiting `Surround` soldier (it keeps its target and rings/
+    menaces until the cooldown elapses) — the attack ring rotates.
+  - **Combo montages (soldier_visual).** `UAshSoldierVisualConfig` gains `AttackComboMontages` (array, one
+    montage per hit; falls back to `AttackMontage`). The proxy plays `AttackComboMontages[AttackComboIndex]`
+    per landed hit (e.g. `Attack_C` = hit 1, `Attack_C_SetB` = hit 2 — the two Paragon minion attack
+    variants; *not* a built-in 3-chain).
+  - **Death → montage (consistency) + AnimBP idle/dead request.** `UAshSoldierVisualConfig::DeathAnim`
+    (single-node `AnimSequence`) is replaced by `DeathMontage` (montage, like attack/hit). The proxy plays
+    it via `Montage_Play` and sets `UAshSoldierAnimInstance::bIsDead`; the held downed pose is now an AnimBP
+    **Dead state** driven by `bIsDead` (a montage blends back out on its own). The "idle not playing" defect
+    is an **AnimBP authoring** gap, not code (the minion AnimBP needs an idle pose at `GroundSpeed≈0`).
+  - Build verified (LyraEditor Win64 Development — Succeeded, 2026-06-29, editor closed). PENDING USER
+    (editor + AnimBP + PIE): rebuild with the editor closed (new fragment `UPROPERTY`s — not Live-Coding-
+    safe); in the **minion AnimBP** ensure an idle pose at zero speed and add a **Dead state** entered on
+    `bIsDead` that holds the downed pose; author the per-unit `AttackComboMontages` + `DeathMontage` on each
+    `DA_*_Visual`; set `InitialMoraleLevel` on each `DA_General_*` and `AttackCooldown = 3.0` on existing
+    `DA_*` soldier configs; PIE-verify idle plays, soldiers occasionally land 2-/3-hit combos (raise morale
+    to 5 for ~20%/10%), the ~3 s cooldown frees the slot for another soldier, and corpses play the death
+    montage and hold the downed pose. See `Done/DONE_mass_soldier_combo_morale.md`.
+
+- [ ] Phase 30: UI (Widget Blueprints) — Player HUD + Unit Health Bars
+  - **IMPLEMENTED (code); PENDING USER build (editor closed) + WBP authoring + PIE.** All widgets are
+    data/observation only (ARCHITECTURE.md 16): the UI reads gameplay state through delegates/subsystems
+    and never mutates it.
+  - **Base + concrete widget classes (UMG `UUserWidget` subclasses).** `UAshUserWidget` (abstract project
+    base) → `UAshHUDWidget` (player HUD: health bar + mana bar, kill count, recently-struck panel),
+    `UAshUnitHealthBarWidget` (over-head bar, cyan ally / red enemy), `UAshTargetInfoWidget` (struck-enemy
+    name/affiliation/health). Elements bind by name (`BindWidgetOptional`) so the WBP layout is free.
+  - **Smooth bars.** The HUD interpolates each bar's percent toward the live attribute fraction every
+    frame (widget NativeTick, not Actor Tick), so health/mana glide down on damage; an optional trailing
+    "chip" bar (`HealthBarTrail`/`ManaBarTrail`) lags further behind to show the amount just lost. Mana =
+    the **Stamina** attribute (the project's secondary pool; no separate Mana attribute exists).
+  - **Data source.** New `UAshCombatFeedSubsystem` (world subsystem) tracks the player's kill count and
+    last-struck unit; the two damage choke points push strikes in — `AAshSoldierProxyActor::ReceiveMeleeHit`
+    (Mass soldiers) and `UAshAttributeSet::PostGameplayEffectExecute` (generals). It records only the local
+    player's strikes (AI-vs-AI is ignored). New `IAshTeamAgentInterface::GetAshDisplayName()` (+ `DisplayName`
+    on hero/general/`UAshSoldierVisualConfig`) names the struck unit.
+  - **Over-head bars ride the existing LOD.** `B_Soldier_Proxy` gains a screen-space `UWidgetComponent`
+    (`HealthBarWidget`) driven from `SyncFromEntity`; a proxy only exists while promoted near the player, so
+    the bar shows only "with the mesh when it is rendered". `UAshUIStatics` gives team→colour/label helpers.
+  - New: `UI/AshUITypes` (`FAshStruckUnitInfo` + `UAshUIStatics`), `UI/AshCombatFeedSubsystem`,
+    `UI/AshUserWidget`, `UI/AshHUDWidget`, `UI/AshUnitHealthBarWidget`, `UI/AshTargetInfoWidget`. Modified:
+    Build.cs (+`UMG`), team interface (+`GetAshDisplayName`), hero/general (+`DisplayName`), visual config
+    (+`DisplayName`), proxy (+widget component + strike report), attribute set (+strike report).
+  - Partial (2026-06-30 via VibeUE): `WBP_AshHUD` (`/AshDraftCore/Game/UI/HUD/`), `WBP_AshUnitHealthBar`
+    (`/AshDraftCore/Game/UI/Unit/`), and `WBP_AshTargetInfo` (`/AshDraftCore/Game/UI/`) authored with
+    correct parent classes and all named bind-widget children. `BP_SoldierProxy.HealthBarWidget.widget_class`
+    assigned to `WBP_AshUnitHealthBar`.
+  - PENDING USER: add `WBP_AshHUD` to the viewport (Create Widget in HeroCharacter/PlayerController BeginPlay
+    → Add to Viewport); set `DisplayName` on `DA_*_Visual`, general BP, and hero BP; PIE-verify per the guide.
+    See `Done/DONE_ui_widgets.md` + `Docs/Guides/Phase30_UI_Widget_Setup_Guide.md`.
+
+- [x] Phase 31: Hero Archetype & Progression Data
+  - **IMPLEMENTED (code); build with editor closed; then author DA_Hero_* assets.**
+  - `UAshHeroConfig` (`UPrimaryDataAsset`) — one asset per hero archetype (name, portrait, base stats,
+    optional `AICharacterClass` pointer). Base stats are the "AI-tier" floor shared by every instance.
+  - `FAshHeroStatBonuses` (`USTRUCT`) — flat additive player-upgrade bonuses. Added to base stats before
+    `SetNumericAttributeBase` so GE modifiers (buffs/debuffs) still layer on top via the normal GAS stack.
+  - `AAshHeroCharacter` gains `HeroConfig` + `StatBonuses`. `InitializeAttributes()` reads config base +
+    bonuses; falls back to legacy `Initial*` floats when no config (backward-compatible). New
+    `ApplyStatBonuses()` re-seeds GAS base values mid-game (save-game load seam).
+  - `AAshGeneralCharacter` gains optional `HeroConfig`. When set, uses archetype base stats only (no bonuses).
+  - PENDING USER: build with the editor closed (new `USTRUCT`/`UPROPERTY`s); author `DA_Hero_*` assets;
+    assign on hero BP + general BPs that represent the same archetype; PIE-verify stat differences when
+    `StatBonuses > 0`. See `Done/DONE_hero_archetype_progression.md`.
+

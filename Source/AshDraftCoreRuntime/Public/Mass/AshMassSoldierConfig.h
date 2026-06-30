@@ -59,15 +59,26 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|MassSoldier|Combat", meta = (ClampMin = "0.0"))
 	float AttackPower = 10.f;
 
-	/** Seconds between attacks. Seeds FAshCombatFragment::AttackCooldown. */
+	/**
+	 * Seconds between attack *cycles* (one cycle = a 1-3 hit combo). Default 3 s (Phase 29): every soldier
+	 * waits this long after finishing a combo before it may start another, and releases its attack slot for
+	 * that window. Seeds FAshCombatFragment::AttackCooldown.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|MassSoldier|Combat", meta = (ClampMin = "0.05"))
-	float AttackCooldown = 1.5f;
+	float AttackCooldown = 3.0f;
 
 	/**
-	 * Per-strike randomization of the attack cooldown (0..1). Each swing's interval is drawn from
+	 * Per-cycle randomization of the attack cooldown (0..1). Each cycle's interval is drawn from
 	 * AttackCooldown * [1 - variance, 1 + variance] so soldiers trade blows on staggered timing instead
 	 * of the whole line swinging in unison. Seeds FAshCombatFragment::AttackCooldownVariance.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|MassSoldier|Combat", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AttackCooldownVariance = 0.4f;
+
+	/**
+	 * Seconds between the consecutive hits of one combo (Phase 29). Paces the burst of a 2- or 3-hit combo;
+	 * tune to match the unit's combo attack montages. Seeds FAshCombatFragment::ComboHitInterval.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|MassSoldier|Combat", meta = (ClampMin = "0.05"))
+	float ComboHitInterval = 0.45f;
 };

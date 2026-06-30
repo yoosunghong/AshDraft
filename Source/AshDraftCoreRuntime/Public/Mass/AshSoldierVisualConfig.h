@@ -8,7 +8,6 @@
 
 class UAnimInstance;
 class UAnimMontage;
-class UAnimSequenceBase;
 class USkeletalMesh;
 
 /**
@@ -33,6 +32,13 @@ class ASHDRAFTCORERUNTIME_API UAshSoldierVisualConfig : public UDataAsset
 	GENERATED_BODY()
 
 public:
+	/**
+	 * Display name for this unit type, shown in the HUD's recently-struck-enemy panel (Phase 30).
+	 * Empty falls back to a generic team-based label ("Enemy" etc.).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UnitVisual")
+	FText DisplayName;
+
 	/** Skeletal mesh applied to the proxy body. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UnitVisual|Mesh")
 	TObjectPtr<USkeletalMesh> SkeletalMesh;
@@ -65,21 +71,35 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UnitVisual|Hit", meta = (ClampMin = "0.0"))
 	float CapsuleHalfHeight = 90.f;
 
-	/** Montage played when this unit lands an attack. */
+	/**
+	 * Single attack montage — the fallback / single-swing animation. Used when AttackComboMontages is empty
+	 * (or a combo hit index is out of its range), so a unit that only needs one swing authors just this.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UnitVisual|Animation")
 	TObjectPtr<UAnimMontage> AttackMontage;
+
+	/**
+	 * Per-hit combo montages (Phase 29): index 0 plays for the 1st hit of an attack cycle, index 1 for the
+	 * 2nd, index 2 for the 3rd. A soldier lands up to 3 hits in one cycle (chance scales with its general's
+	 * morale), and the representation proxy plays AttackComboMontages[HitIndex] for each landed hit, falling
+	 * back to AttackMontage when the array is empty or shorter than the hit index. Author e.g. Attack_C as
+	 * hit 1 and Attack_C_SetB as hit 2 (the two Paragon minion attack variants) for visual variety.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UnitVisual|Animation")
+	TArray<TObjectPtr<UAnimMontage>> AttackComboMontages;
 
 	/** Montage played when this unit is hit. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UnitVisual|Animation")
 	TObjectPtr<UAnimMontage> HitReactMontage;
 
 	/**
-	 * Animation played once when this unit dies (Phase 27). It is a raw **AnimSequence**, not a montage:
-	 * the representation proxy plays it in single-node mode (`PlayAnimation`, non-looping) the frame the
-	 * soldier's health hits zero, which **holds the final frame** (the downed pose) for the whole corpse
-	 * window — no AnimBP authoring needed and no blend back to idle. The proxy restores its AnimBP when the
+	 * Montage played once when this unit dies (Phase 27/29). Converted to a **montage** for consistency with
+	 * the attack/hit animations (Phase 29): the representation proxy plays it via Montage_Play the frame the
+	 * soldier's health hits zero, and sets UAshSoldierAnimInstance::bIsDead so the AnimBP can transition to a
+	 * **Dead state** that holds the downed pose for the corpse window (montages blend back out on their own,
+	 * so the held pose is the AnimBP Dead state's job). The proxy clears bIsDead + stops montages when the
 	 * pooled body is recycled for a live soldier.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|UnitVisual|Animation")
-	TObjectPtr<UAnimSequenceBase> DeathAnim;
+	TObjectPtr<UAnimMontage> DeathMontage;
 };

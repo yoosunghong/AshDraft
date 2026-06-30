@@ -190,7 +190,11 @@ void UAshMassSoldierBehaviorProcessor::Execute(FMassEntityManager& EntityManager
 			}
 
 			const EAshSoldierState St = StateList[It].State;
-			const bool bInnerHolder = (St == EAshSoldierState::Engage || St == EAshSoldierState::Attack);
+			// A soldier on its post-cycle cooldown (Phase 29) is not an "active striker", so it no longer
+			// occupies an inner attack slot — freeing it for a waiting (Surround) soldier to take a turn.
+			const FAshCombatFragment& CombatA = CombatList[It];
+			const bool bActiveStrikerA = (CombatA.ComboLength > 0) || (CombatA.TimeSinceLastAttack >= CombatA.RolledAttackInterval);
+			const bool bInnerHolder = (St == EAshSoldierState::Engage || St == EAshSoldierState::Attack) && bActiveStrikerA;
 
 			// A living soldier's current target is a committed claim (kept unless it re-decides this frame).
 			if (CombatList[It].Target.IsSet())
@@ -234,6 +238,11 @@ void UAshMassSoldierBehaviorProcessor::Execute(FMassEntityManager& EntityManager
 			// Last frame's state + target — used to keep an inner (striking) slot stable once held, so a
 			// soldier doesn't flip between striking and surrounding every AI tick (Phase 28).
 			const EAshSoldierState PrevState = StateFrag.State;
+
+			// On its post-cycle cooldown (Phase 29) a soldier is not an active striker: it yields its inner
+			// attack slot so a waiting (Surround) soldier can strike, keeping its target and ringing/menacing
+			// until the 3 s cooldown elapses. Mirrors the combat processor's cycle gate.
+			const bool bActiveStriker = (Combat.ComboLength > 0) || (Combat.TimeSinceLastAttack >= Combat.RolledAttackInterval);
 
 			// Releases this soldier's current melee claim (used whenever it stops targeting a Mass enemy).
 			const int32 CurrentIdx = Combat.Target.IsSet() ? Combat.Target.Index : INDEX_NONE;
@@ -293,9 +302,10 @@ void UAshMassSoldierBehaviorProcessor::Execute(FMassEntityManager& EntityManager
 				const FVector ActorPos = CombatTarget.ActorTarget->GetActorLocation();
 
 				// Keep an inner (striking) seat if we already held one; else take a free one; else surround.
-				const bool bWasInner = (PrevState == EAshSoldierState::Engage || PrevState == EAshSoldierState::Attack);
+				// A soldier on its post-cycle cooldown is never inner — it yields the slot and rings (Phase 29).
+				const bool bWasInner = bActiveStriker && (PrevState == EAshSoldierState::Engage || PrevState == EAshSoldierState::Attack);
 				bool bInner = bWasInner;
-				if (!bInner)
+				if (!bInner && bActiveStriker)
 				{
 					int32& Inner = ActorInnerUsed.FindOrAdd(CombatTarget.ActorTarget->GetUniqueID());
 					if (Inner < Active) { ++Inner; bInner = true; }
@@ -382,11 +392,13 @@ void UAshMassSoldierBehaviorProcessor::Execute(FMassEntityManager& EntityManager
 			// target; else take a free striking slot if the target still has fewer than Active strikers; else
 			// ring it and menace. The surplus that can't even get a ring slot was already dropped by the cap
 			// in AcquireCappedNearest (it went to a deeper, open enemy — rear engagement). (Phase 28)
-			const bool bWasInnerSame = (CurrentIdx == ChosenIdx)
+			// A soldier on its post-cycle cooldown is never inner — it yields the striking slot and rings
+			// the same target until its cooldown elapses, so a waiting soldier strikes in its place (Phase 29).
+			const bool bWasInnerSame = bActiveStriker && (CurrentIdx == ChosenIdx)
 				&& (PrevState == EAshSoldierState::Engage || PrevState == EAshSoldierState::Attack);
 			const bool bWasOuterSame = (CurrentIdx == ChosenIdx) && (PrevState == EAshSoldierState::Surround);
 			bool bInner = bWasInnerSame;
-			if (!bInner)
+			if (!bInner && bActiveStriker)
 			{
 				int32& Inner = InnerUsed.FindOrAdd(ChosenIdx);
 				if (Inner < Active) { ++Inner; bInner = true; }

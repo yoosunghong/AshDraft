@@ -4,9 +4,11 @@
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Blueprint/UserWidget.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/WidgetComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
 #include "Mass/AshSoldierAnimInstance.h"
@@ -14,6 +16,9 @@
 #include "Mass/AshSoldierVisualConfig.h"
 #include "MassEntityManager.h"
 #include "MassEntitySubsystem.h"
+#include "UI/AshCombatFeedSubsystem.h"
+#include "UI/AshSoldierHealthBarWidget.h"
+#include "UI/AshUnitHealthBarWidget.h"
 
 AAshSoldierProxyActor::AAshSoldierProxyActor()
 {
@@ -21,6 +26,8 @@ AAshSoldierProxyActor::AAshSoldierProxyActor()
 	// (ARCHITECTURE.md 18.3). The skeletal mesh still evaluates its own pose, but only while
 	// rendered (set below) so off-screen proxies stay cheap.
 	PrimaryActorTick.bCanEverTick = false;
+
+	DefaultHealthBarWidgetClass = UAshSoldierHealthBarWidget::StaticClass();
 
 	// Plain scene root carries the entity's *facing*; the mesh hangs under it with its own
 	// art-correction transform (set by ConfigureVisual). Keeping these on separate components is
@@ -51,8 +58,86 @@ AAshSoldierProxyActor::AAshSoldierProxyActor()
 	HitCapsule->SetGenerateOverlapEvents(false); // queried by sweeps, not an event source
 	HitCapsule->SetCanEverAffectNavigation(false);
 
+	// Over-head unit health bar (Phase 30). Screen-space so it always faces the camera and stays a
+	// readable size regardless of distance. The widget CLASS is assigned on B_Soldier_Proxy (a WBP child
+	// of UAshUnitHealthBarWidget); left empty here so the proxy stays a data-driven template. Hidden with
+	// the actor when pooled, so only promoted (rendered) soldiers show a bar.
+	HealthBarWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("HealthBarWidget"));
+	HealthBarWidget->SetupAttachment(RootScene);
+	HealthBarWidget->SetWidgetSpace(EWidgetSpace::Screen);
+	HealthBarWidget->SetRelativeLocation(FVector(0.f, 0.f, 210.f)); // above the head
+	HealthBarWidget->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	HealthBarWidget->SetGenerateOverlapEvents(false);
+	HealthBarWidget->SetCanEverAffectNavigation(false);
+	HealthBarWidget->SetTickWhenOffscreen(false);
+	ApplyHealthBarPresentation();
+	EnsureHealthBarWidgetClass();
+
 	// Idle until the pool assigns this proxy to an entity.
 	SetActorHiddenInGame(true);
+}
+
+void AAshSoldierProxyActor::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	ApplyHealthBarPresentation();
+	EnsureHealthBarWidgetClass();
+}
+
+void AAshSoldierProxyActor::ApplyHealthBarPresentation()
+{
+	if (HealthBarWidget)
+	{
+		const FVector2D ClampedDrawSize(
+			FMath::Clamp(HealthBarDrawSize.X, 1.f, MaxHealthBarDrawSize.X),
+			FMath::Clamp(HealthBarDrawSize.Y, 1.f, MaxHealthBarDrawSize.Y));
+		HealthBarWidget->SetDrawAtDesiredSize(false);
+		HealthBarWidget->SetDrawSize(ClampedDrawSize);
+	}
+}
+
+void AAshSoldierProxyActor::EnsureHealthBarWidgetClass()
+{
+	if (!HealthBarWidget)
+	{
+		return;
+	}
+
+	TSubclassOf<UUserWidget> SoldierWidgetClass = DefaultHealthBarWidgetClass;
+	if (!SoldierWidgetClass || !SoldierWidgetClass->IsChildOf(UAshSoldierHealthBarWidget::StaticClass()))
+	{
+		SoldierWidgetClass = UAshSoldierHealthBarWidget::StaticClass();
+	}
+
+	if (HealthBarWidget->GetWidgetClass() == SoldierWidgetClass)
+	{
+		return;
+	}
+
+	HealthBarWidget->SetWidgetClass(SoldierWidgetClass);
+	HealthBarWidget->InitWidget();
+}
+
+bool AAshSoldierProxyActor::ShouldShowHealthBar() const
+{
+	return RepresentedTeam == EAshTeamId::Enemy;
+}
+
+void AAshSoldierProxyActor::ApplyHealthBarVisibility()
+{
+	if (!HealthBarWidget)
+	{
+		return;
+	}
+
+	const bool bShowHealthBar = ShouldShowHealthBar();
+	HealthBarWidget->SetVisibility(bShowHealthBar, true);
+	HealthBarWidget->SetHiddenInGame(!bShowHealthBar, true);
+
+	if (UUserWidget* Widget = HealthBarWidget->GetUserWidgetObject())
+	{
+		Widget->SetVisibility(bShowHealthBar ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
 }
 
 void AAshSoldierProxyActor::AssignToEntity(FMassEntityHandle Entity, EAshTeamId Team)
@@ -60,6 +145,8 @@ void AAshSoldierProxyActor::AssignToEntity(FMassEntityHandle Entity, EAshTeamId 
 	RepresentedEntity = Entity;
 	RepresentedTeam = Team;
 	SetActorHiddenInGame(false);
+	EnsureHealthBarWidgetClass();
+	ApplyHealthBarVisibility();
 
 	// Become a hittable target only while representing a live soldier (pooled proxies must not be
 	// stray hits under the player's attack sweep). Re-assert overlap-only collision at runtime (after any
@@ -74,24 +161,33 @@ void AAshSoldierProxyActor::AssignToEntity(FMassEntityHandle Entity, EAshTeamId 
 		HitCapsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	}
 
-	// Pooled proxies are recycled across soldiers: a proxy that was a corpse is left in single-node mode
-	// holding its death pose. Restore AnimBlueprint mode so the recycled body animates as a live soldier
-	// again (the AnimClass is still applied, so switching modes re-creates the locomotion instance). For a
-	// different unit type, ConfigureVisual re-applies mesh + AnimClass and overrides this anyway.
-	if (MeshComponent && MeshComponent->GetAnimationMode() != EAnimationMode::AnimationBlueprint)
+	// Pooled proxies are recycled across soldiers: a proxy that was a corpse still has bIsDead set on its
+	// AnimBP (Dead state holding the downed pose). Clear it so the recycled body leaves the Dead state and
+	// animates as a live soldier again (Phase 29). The death montage is also stopped in ClearAssignment.
+	if (UAshSoldierAnimInstance* SoldierAnim = MeshComponent ? Cast<UAshSoldierAnimInstance>(MeshComponent->GetAnimInstance()) : nullptr)
 	{
-		MeshComponent->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+		SoldierAnim->bIsDead = false;
+	}
+
+	if (UAshUnitHealthBarWidget* Bar = HealthBarWidget ? Cast<UAshUnitHealthBarWidget>(HealthBarWidget->GetUserWidgetObject()) : nullptr)
+	{
+		Bar->SetUnitName(FText::GetEmpty());
 	}
 }
 
 void AAshSoldierProxyActor::ClearAssignment()
 {
-	// Stop any montage still playing so a recycled proxy starts clean on its next entity.
+	// Stop any montage still playing (incl. a death montage) and clear the dead flag so a recycled proxy
+	// starts clean on its next entity (Phase 29).
 	if (MeshComponent)
 	{
 		if (UAnimInstance* Anim = MeshComponent->GetAnimInstance())
 		{
 			Anim->Montage_Stop(0.f);
+		}
+		if (UAshSoldierAnimInstance* SoldierAnim = Cast<UAshSoldierAnimInstance>(MeshComponent->GetAnimInstance()))
+		{
+			SoldierAnim->bIsDead = false;
 		}
 	}
 
@@ -104,15 +200,36 @@ void AAshSoldierProxyActor::ClearAssignment()
 	{
 		HitCapsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
+
+	ApplyHealthBarVisibility();
+
+	if (UAshUnitHealthBarWidget* Bar = HealthBarWidget ? Cast<UAshUnitHealthBarWidget>(HealthBarWidget->GetUserWidgetObject()) : nullptr)
+	{
+		Bar->SetUnitName(FText::GetEmpty());
+	}
 }
 
-void AAshSoldierProxyActor::SyncFromEntity(const FVector& Position, float FacingYaw, const FVector& Velocity, float /*HealthFraction*/,
+void AAshSoldierProxyActor::SyncFromEntity(const FVector& Position, float FacingYaw, const FVector& Velocity, float HealthFraction,
 	bool bInCombatStance)
 {
 	// Mass is the authority; the proxy follows the entity's position and faces the Mass-authoritative
-	// heading. Health fraction is accepted for future visual feedback (damage tint, scale) but unused
-	// in the PoC.
+	// heading.
 	SetActorLocation(Position);
+
+	// Drive the over-head health bar (Phase 30). The screen-space user widget is created lazily on first
+	// render, so guard the cast; team sets the colour (cyan friendly / red enemy), fraction the fill.
+	ApplyHealthBarVisibility();
+	if (HealthBarWidget)
+	{
+		if (UAshUnitHealthBarWidget* Bar = Cast<UAshUnitHealthBarWidget>(HealthBarWidget->GetUserWidgetObject()))
+		{
+			if (ShouldShowHealthBar())
+			{
+				Bar->SetTeam(RepresentedTeam);
+				Bar->SetHealth(HealthFraction);
+			}
+		}
+	}
 
 	// Facing comes from Mass (target-aware + interpolated), NOT from raw velocity — so a soldier that
 	// has stopped in melee still faces its enemy instead of keeping a stale travel heading (Phase 20).
@@ -191,7 +308,7 @@ void AAshSoldierProxyActor::ConfigureVisual(const UAshSoldierVisualConfig* Visua
 	}
 }
 
-void AAshSoldierProxyActor::ReceiveMeleeHit(float Damage, const AActor* /*Instigator*/)
+void AAshSoldierProxyActor::ReceiveMeleeHit(float Damage, const AActor* _Instigator)
 {
 	// Mass is authoritative: route the actor-space hit back into the entity's health fragment. The
 	// proxy is only the visible body / hit target; the combat + death processors do the rest.
@@ -223,12 +340,36 @@ void AAshSoldierProxyActor::ReceiveMeleeHit(float Damage, const AActor* /*Instig
 		{
 			Event->bWasHitThisTick = true;
 		}
+
+		// HUD combat feed (Phase 30): record the player's strike on this Mass soldier. The feed ignores
+		// non-player instigators, so AI-vs-soldier hits (e.g. a general's sweep) are harmlessly skipped.
+		if (UAshCombatFeedSubsystem* Feed = UAshCombatFeedSubsystem::Get(this))
+		{
+			const float MaxHealth = FMath::Max(1.f, Health->MaxHealth);
+			const FText UnitName = CurrentVisual ? CurrentVisual->DisplayName : FText::GetEmpty();
+			Feed->ReportPlayerStrike(_Instigator, UnitName, RepresentedTeam,
+				Health->CurrentHealth / MaxHealth, Health->CurrentHealth <= 0.f);
+		}
 	}
 }
 
-void AAshSoldierProxyActor::PlayAttackMontage()
+void AAshSoldierProxyActor::PlayAttackMontage(int32 ComboIndex)
 {
-	PlayMontage(CurrentVisual ? CurrentVisual->AttackMontage : nullptr);
+	// Per-hit combo montage (Phase 29): use AttackComboMontages[ComboIndex] when authored, else fall back
+	// to the single AttackMontage so single-swing units still animate.
+	UAnimMontage* Montage = nullptr;
+	if (CurrentVisual)
+	{
+		if (CurrentVisual->AttackComboMontages.IsValidIndex(ComboIndex) && CurrentVisual->AttackComboMontages[ComboIndex])
+		{
+			Montage = CurrentVisual->AttackComboMontages[ComboIndex];
+		}
+		else
+		{
+			Montage = CurrentVisual->AttackMontage;
+		}
+	}
+	PlayMontage(Montage);
 }
 
 void AAshSoldierProxyActor::PlayHitReactMontage()
@@ -244,13 +385,14 @@ void AAshSoldierProxyActor::PlayDeath()
 		HitCapsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
 
-	// Single-node, non-looping playback bypasses the AnimBP and freezes on the final frame (the downed
-	// pose) for the whole corpse window — so the body never blends back to idle. AssignToEntity restores
-	// AnimBlueprint mode when this proxy is later recycled for a live soldier.
-	if (MeshComponent && CurrentVisual && CurrentVisual->DeathAnim)
+	// Death is now a montage for consistency with attack/hit (Phase 29). Montage_Play drives the death
+	// motion; setting bIsDead lets the AnimBP transition to a Dead state that HOLDS the downed pose for the
+	// corpse window (a montage blends back out on its own, so the held pose is the AnimBP state's job).
+	if (UAshSoldierAnimInstance* SoldierAnim = MeshComponent ? Cast<UAshSoldierAnimInstance>(MeshComponent->GetAnimInstance()) : nullptr)
 	{
-		MeshComponent->PlayAnimation(CurrentVisual->DeathAnim, /*bLooping=*/false);
+		SoldierAnim->bIsDead = true;
 	}
+	PlayMontage(CurrentVisual ? CurrentVisual->DeathMontage : nullptr);
 }
 
 void AAshSoldierProxyActor::PlayMontage(UAnimMontage* Montage)

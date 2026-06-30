@@ -89,7 +89,8 @@ void UAshMassRepresentationProcessor::Execute(FMassEntityManager& EntityManager,
 					// Play this frame's combat events on the visible body (Phase 15).
 					if (EventList[It].bAttackedThisTick)
 					{
-						Proxy->PlayAttackMontage();
+						// Play the montage for this combo hit (Phase 29); the combat processor stamps which hit landed.
+						Proxy->PlayAttackMontage(EventList[It].AttackComboIndex);
 					}
 					if (EventList[It].bWasHitThisTick)
 					{

@@ -7,6 +7,8 @@
 #include "AbilitySystem/AshGameplayAbility.h"
 #include "Animation/AnimSequenceBase.h"
 #include "AshGameplayTags.h"
+#include "Engine/Texture2D.h"
+#include "Hero/AshHeroConfig.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -33,6 +35,11 @@ AAshHeroCharacter::AAshHeroCharacter(const FObjectInitializer& ObjectInitializer
 {
 	// No per-frame Actor Tick (ARCHITECTURE.md 18.3) — movement/anim/input are event-driven.
 	PrimaryActorTick.bCanEverTick = false;
+
+	// Player-capable hero pawns must not be AI possessed directly. Non-player heroes use
+	// AAshGeneralCharacter as the explicit AI adapter.
+	AutoPossessAI = EAutoPossessAI::Disabled;
+	AIControllerClass = nullptr;
 
 	// The controller drives camera yaw via the spring arm, not the capsule directly.
 	bUseControllerRotationPitch = false;
@@ -73,6 +80,11 @@ AAshHeroCharacter::AAshHeroCharacter(const FObjectInitializer& ObjectInitializer
 UAbilitySystemComponent* AAshHeroCharacter::GetAbilitySystemComponent() const
 {
 	return AbilitySystemComponent;
+}
+
+UTexture2D* AAshHeroCharacter::GetAshPortrait() const
+{
+	return HeroConfig ? HeroConfig->Portrait.LoadSynchronous() : nullptr;
 }
 
 void AAshHeroCharacter::BeginPlay()
@@ -201,13 +213,56 @@ void AAshHeroCharacter::InitializeAttributes()
 		return;
 	}
 
-	// Seed base values from the editor-tunable initial stats (ARCHITECTURE.md 17).
-	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetMaxHealthAttribute(), InitialMaxHealth);
-	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetHealthAttribute(), InitialMaxHealth);
-	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetAttackPowerAttribute(), InitialAttackPower);
-	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetDefenseAttribute(), InitialDefense);
-	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetMaxStaminaAttribute(), InitialMaxStamina);
-	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetStaminaAttribute(), InitialMaxStamina);
+	// If a HeroConfig archetype asset is assigned, use its base stats + the player's stat bonuses.
+	// The bonuses represent permanent upgrades (e.g. from a save game); they are part of the base
+	// value so GE modifiers (buffs/debuffs) still layer on top correctly via the normal GAS stack.
+	// Fall back to the legacy per-Blueprint Initial* floats when no config is set (backward-compat).
+	float MaxHealth   = InitialMaxHealth;
+	float AttackPower = InitialAttackPower;
+	float Defense     = InitialDefense;
+	float MaxStamina  = InitialMaxStamina;
+
+	if (HeroConfig)
+	{
+		MaxHealth   = FMath::Max(1.f, HeroConfig->BaseMaxHealth   + StatBonuses.BonusMaxHealth);
+		AttackPower = FMath::Max(0.f, HeroConfig->BaseAttackPower + StatBonuses.BonusAttackPower);
+		Defense     = FMath::Max(0.f, HeroConfig->BaseDefense     + StatBonuses.BonusDefense);
+		MaxStamina  = FMath::Max(1.f, HeroConfig->BaseMaxStamina  + StatBonuses.BonusMaxStamina);
+	}
+
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetMaxHealthAttribute(),  MaxHealth);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetHealthAttribute(),     MaxHealth);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetAttackPowerAttribute(), AttackPower);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetDefenseAttribute(),    Defense);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetMaxStaminaAttribute(), MaxStamina);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetStaminaAttribute(),    MaxStamina);
+}
+
+void AAshHeroCharacter::ApplyStatBonuses(const FAshHeroStatBonuses& NewBonuses)
+{
+	// No-op without a config — the legacy Initial* path has no separate bonus concept.
+	if (!HeroConfig || !AbilitySystemComponent || !AttributeSet)
+	{
+		return;
+	}
+
+	StatBonuses = NewBonuses;
+
+	// Re-seed the GAS base values so the new totals take effect immediately, even mid-game.
+	// Current health is preserved proportionally so the player doesn't heal/die on upgrade.
+	const float OldMaxHealth = FMath::Max(1.f, AbilitySystemComponent->GetNumericAttribute(UAshAttributeSet::GetMaxHealthAttribute()));
+	const float HealthFraction = AbilitySystemComponent->GetNumericAttribute(UAshAttributeSet::GetHealthAttribute()) / OldMaxHealth;
+
+	const float NewMaxHealth   = FMath::Max(1.f, HeroConfig->BaseMaxHealth   + StatBonuses.BonusMaxHealth);
+	const float NewAttackPower = FMath::Max(0.f, HeroConfig->BaseAttackPower + StatBonuses.BonusAttackPower);
+	const float NewDefense     = FMath::Max(0.f, HeroConfig->BaseDefense     + StatBonuses.BonusDefense);
+	const float NewMaxStamina  = FMath::Max(1.f, HeroConfig->BaseMaxStamina  + StatBonuses.BonusMaxStamina);
+
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetMaxHealthAttribute(),  NewMaxHealth);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetHealthAttribute(),     NewMaxHealth * HealthFraction);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetAttackPowerAttribute(), NewAttackPower);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetDefenseAttribute(),    NewDefense);
+	AbilitySystemComponent->SetNumericAttributeBase(UAshAttributeSet::GetMaxStaminaAttribute(), NewMaxStamina);
 }
 
 void AAshHeroCharacter::GrantDefaultAbilities()

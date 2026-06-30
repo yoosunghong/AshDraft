@@ -53,4 +53,13 @@ public:
 	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Ash|Anim")
 	bool bInCombatStance = false;
+
+	/**
+	 * True once this soldier has died (Phase 29). Set by the proxy alongside the death montage; drives an
+	 * AnimBP **Dead state** that holds the downed pose for the corpse window (the death montage plays the
+	 * motion into it, then blends out — so the static held pose must come from this state, not the montage).
+	 * Cleared when the pooled proxy is recycled for a live soldier, so the body animates normally again.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Ash|Anim")
+	bool bIsDead = false;
 };

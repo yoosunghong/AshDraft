@@ -60,6 +60,9 @@ private:
 	/** Repeating timer body: reclassify every general's actor LOD from player distance. */
 	void UpdateGeneralLODs();
 
+	/** Repeating timer body: lets registered non-player heroes yield out of the player's path. */
+	void UpdateGeneralPlayerDisplacement();
+
 	/** GeneralId -> record. The single source of truth for the operational layer this frame. */
 	UPROPERTY()
 	TMap<int32, FAshGeneralState> Generals;
@@ -70,6 +73,15 @@ private:
 	/** Drives UpdateGeneralLODs at a fixed cadence (LOD changes slowly; no need to tick every frame). */
 	FTimerHandle LODTimerHandle;
 
+	/** Drives player path yielding at movement cadence from one world timer instead of per-actor Tick. */
+	FTimerHandle PlayerDisplacementTimerHandle;
+
+	/** Last time UpdateGeneralPlayerDisplacement ran, used to compute a stable DeltaTime. */
+	float LastPlayerDisplacementUpdateTime = 0.f;
+
 	/** Seconds between actor-LOD reclassification passes. */
 	static constexpr float LODUpdatePeriod = 0.5f;
+
+	/** Seconds between player path yielding passes. */
+	static constexpr float PlayerDisplacementUpdatePeriod = 1.f / 30.f;
 };

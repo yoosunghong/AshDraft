@@ -5,9 +5,9 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
-#include "Mass/AshMassLODConfig.h"
 #include "Mass/AshSoldierFragments.h"
 #include "MassExecutionContext.h"
+#include "Performance/AshAILODSettings.h"
 #include "Performance/AshPerfStatics.h"
 
 #if ENABLE_DRAW_DEBUG
@@ -46,18 +46,18 @@ void UAshMassLODProcessor::ResolveConfig()
 	}
 	bConfigResolved = true;
 
-	// Synchronous load is acceptable: this runs once, and the config is a tiny UDataAsset.
-	if (const UAshMassLODConfig* Config = LODConfig.LoadSynchronous())
+	if (const UAshAILODSettings* Settings = GetDefault<UAshAILODSettings>())
 	{
-		LOD0MaxDistance = Config->LOD0MaxDistance;
-		LOD1MaxDistance = Config->LOD1MaxDistance;
-		LOD2MaxDistance = Config->LOD2MaxDistance;
+		LOD0MaxDistance = Settings->LOD0MaxDistance;
+		LOD1MaxDistance = Settings->LOD1MaxDistance;
+		LOD2MaxDistance = Settings->LOD2MaxDistance;
 		for (int32 i = 0; i < 4; ++i)
 		{
-			LODUpdateIntervals[i] = Config->LODUpdateIntervals[i];
+			LODUpdateIntervals[i] = Settings->GetUpdateInterval(i);
 		}
-		NumTimeSliceBatches = FMath::Max(1, Config->NumTimeSliceBatches);
+		NumTimeSliceBatches = FMath::Max(1, Settings->NumTimeSliceBatches);
 	}
+
 }
 
 int32 UAshMassLODProcessor::ComputeLODLevel(float Distance) const

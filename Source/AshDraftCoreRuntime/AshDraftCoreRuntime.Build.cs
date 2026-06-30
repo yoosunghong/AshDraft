@@ -46,6 +46,10 @@ public class AshDraftCoreRuntime : ModuleRules
 				// Telemetry / QA-bot observation + log export to JSON (Phase 17).
 				"Json",
 				"JsonUtilities",
+				// UMG widgets for the player HUD + over-head unit health bars (Phase 30).
+				// UUserWidget / UProgressBar / UTextBlock and the proxy's UWidgetComponent.
+				"UMG",
+				"DeveloperSettings",
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);

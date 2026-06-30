@@ -5,6 +5,8 @@
 #include "AshGameplayTags.h"
 #include "GameplayEffectExtension.h"
 #include "QA/AshTelemetrySubsystem.h"
+#include "Teams/AshTeamAgentInterface.h"
+#include "UI/AshCombatFeedSubsystem.h"
 
 UAshAttributeSet::UAshAttributeSet()
 {
@@ -76,6 +78,23 @@ void UAshAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 					SourceActor ? SourceActor->GetName() : TEXT("<unknown>"),
 					TargetActor ? TargetActor->GetName() : TEXT("<unknown>"),
 					LocalDamage, EventType);
+			}
+
+			// HUD combat feed (Phase 30): record the player's own strikes on ASC-owning units (generals).
+			// The feed ignores non-player instigators, so this is safe to call unconditionally.
+			if (UAshCombatFeedSubsystem* Feed = UAshCombatFeedSubsystem::Get(TargetActor))
+			{
+				EAshTeamId VictimTeam = EAshTeamId::Neutral;
+				FText VictimName;
+				UTexture2D* VictimPortrait = nullptr;
+				if (const IAshTeamAgentInterface* Agent = Cast<IAshTeamAgentInterface>(TargetActor))
+				{
+					VictimTeam = Agent->GetAshTeamId();
+					VictimName = Agent->GetAshDisplayName();
+					VictimPortrait = Agent->GetAshPortrait();
+				}
+				const float InMaxHealth = FMath::Max(1.f, GetMaxHealth());
+				Feed->ReportPlayerStrike(SourceActor, VictimName, VictimTeam, NewHealth / InMaxHealth, NewHealth <= 0.f, VictimPortrait);
 			}
 		}
 	}

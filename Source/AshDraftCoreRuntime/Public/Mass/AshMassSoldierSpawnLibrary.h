@@ -59,8 +59,16 @@ namespace AshMassSoldierSpawn
 		float FallbackMoveSpeed = 350.f;
 		float FallbackAttackRange = 150.f;
 		float FallbackAttackPower = 10.f;
-		float FallbackAttackCooldown = 1.5f;
+		float FallbackAttackCooldown = 3.0f;
 		float FallbackAttackCooldownVariance = 0.4f;
+		float FallbackComboHitInterval = 0.45f;
+
+		/**
+		 * Morale-driven combo chances stamped onto every spawned soldier (Phase 29). Set by the owning
+		 * general from its morale level; left 0 by the plain spawner (no general -> single hits only).
+		 */
+		float TwoHitChance = 0.f;
+		float ThreeHitChance = 0.f;
 	};
 
 	/**
