@@ -5,8 +5,12 @@
 #include "AbilitySystem/AshAbilitySystemComponent.h"
 #include "AbilitySystem/AshAttributeSet.h"
 #include "AbilitySystem/AshGameplayAbility.h"
+#include "AbilitySystem/AshGameplayEffect_Stun.h"
 #include "Animation/AnimSequenceBase.h"
+#include "Combat/AshCombatRulesSettings.h"
+#include "GameplayEffect.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "AIController.h"
 #include "AI/AshCommanderSubsystem.h"
 #include "Components/WidgetComponent.h"
 #include "Engine/Texture2D.h"
@@ -33,6 +37,7 @@
 #include "MassEntitySubsystem.h"
 #include "Performance/AshAILODSettings.h"
 #include "Teams/AshTeamStatics.h"
+#include "TimerManager.h"
 
 namespace
 {
@@ -78,6 +83,9 @@ AAshGeneralCharacter::AAshGeneralCharacter(const FObjectInitializer& ObjectIniti
 	HealthBarWidget->SetWidgetSpace(EWidgetSpace::Screen);
 	HealthBarWidget->SetDrawSize(FVector2D(120.f, 14.f));
 	HealthBarWidget->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// Default stun effect (overridable per-Blueprint for weapon/skill-specific stuns).
+	StunEffectClass = UAshGameplayEffect_Stun::StaticClass();
 }
 
 UAbilitySystemComponent* AAshGeneralCharacter::GetAbilitySystemComponent() const
@@ -413,6 +421,70 @@ void AAshGeneralCharacter::ReceiveSoldierDamage(float Amount, AActor* DamageInst
 	AbilitySystemComponent->SetNumericAttributeBase(
 		UAshAttributeSet::GetHealthAttribute(),
 		FMath::Max(0.f, CurrentHealth - Amount));
+}
+
+void AAshGeneralCharacter::ApplyHitReaction(const FVector& SourceLocation, int32 SourceId)
+{
+	if (bIsDead)
+	{
+		return;
+	}
+
+	// Pushed back ever so slightly (Phase 32): a brief launch away from the attacker.
+	if (HitReactKnockbackSpeed > 0.f)
+	{
+		FVector Dir = GetActorLocation() - SourceLocation;
+		Dir.Z = 0.f;
+		Dir = Dir.GetSafeNormal2D();
+		if (Dir.IsNearlyZero())
+		{
+			Dir = -GetActorForwardVector();
+		}
+		LaunchCharacter(Dir * HitReactKnockbackSpeed, /*bXYOverride=*/true, /*bZOverride=*/false);
+	}
+
+	ApplyStun(HitReactStunDuration, SourceId);
+}
+
+void AAshGeneralCharacter::ApplyStun(float Duration, int32 SourceId)
+{
+	if (bIsDead || Duration <= 0.f || !AbilitySystemComponent || !StunEffectClass)
+	{
+		return;
+	}
+
+	// Game-wide new-source immunity (UAshCombatRulesSettings): same attacker re-stuns freely, a different
+	// attacker is locked out until the window elapses (prevents infinite stun-locking).
+	const UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.f;
+	const float Immunity = GetDefault<UAshCombatRulesSettings>()->NewStunSourceImmunity;
+	const bool bSameSource = (SourceId != INDEX_NONE) && (SourceId == LastStunSourceId);
+	if (!bSameSource && Immunity > 0.f && (Now - LastStunTime) < Immunity)
+	{
+		return; // still immune to a new stun source
+	}
+	LastStunSourceId = SourceId;
+	LastStunTime = Now;
+
+	// Apply the stun as GE_State_Stunned (grants Ash.State.Stunned for Duration via SetByCaller, expires on
+	// its own). The StateTree tasks read IsStunned() to stop movement + skip orders; cancel the attack now.
+	FGameplayEffectContextHandle Context = AbilitySystemComponent->MakeEffectContext();
+	FGameplayEffectSpecHandle Spec = AbilitySystemComponent->MakeOutgoingSpec(StunEffectClass, 1.f, Context);
+	if (Spec.IsValid())
+	{
+		Spec.Data->SetSetByCallerMagnitude(AshGameplayTags::Data_StunDuration, Duration);
+		AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*Spec.Data);
+	}
+	AbilitySystemComponent->CancelAllAbilities();
+	if (AAIController* AI = Cast<AAIController>(GetController()))
+	{
+		AI->StopMovement();
+	}
+}
+
+bool AAshGeneralCharacter::IsStunned() const
+{
+	return AbilitySystemComponent && AbilitySystemComponent->HasMatchingGameplayTag(AshGameplayTags::State_Stunned);
 }
 
 bool AAshGeneralCharacter::HasThreat(EAshThreatType ThreatType)

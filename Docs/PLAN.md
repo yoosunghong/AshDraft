@@ -441,3 +441,59 @@
     assign on hero BP + general BPs that represent the same archetype; PIE-verify stat differences when
     `StatBonuses > 0`. See `Done/DONE_hero_archetype_progression.md`.
 
+- [x] Phase 32: Hit-Reaction Stun + Knockback, and Hero Attack Improvements
+  - **IMPLEMENTED (code); build verified (LyraEditor Win64 Development — Succeeded, 2026-07-01, editor closed).**
+  - **Universal hit reaction (pushed back + stunned on being hit).** Every combatant — hero, general,
+    Mass soldier — is now briefly **stunned** and **knocked back ever so slightly** when struck; while
+    stunned it can neither move nor attack. Stun is a **GAS state**: the hero/general carry an ASC, so
+    being hit adds the `Ash.State.Stunned` loose tag for a data-tunable window (cancels the in-flight
+    attack; the basic-attack ability lists `Ash.State.Stunned`/`Ash.State.Dead` in `ActivationBlockedTags`
+    so it can't re-fire while stunned; movement input is gated on the tag for the hero, and the
+    `AAshGeneralCharacter` StateTree tasks freeze movement/orders via `IsStunned()`). Mass soldiers have
+    no ASC, so they carry the analogous **`FAshStunFragment`** (StunTimeRemaining + decaying knockback);
+    the movement processor owns the countdown + slide and suppresses steering, the combat processor skips
+    striking while stunned. Knockback is a brief launch (GAS) / decaying velocity (Mass) away from the
+    attacker. All applied at the existing damage choke points: `UAshGA_BasicAttack::PerformHitSweep`
+    (hero→ASC target via the new `IAshTeamAgentInterface::ApplyHitReaction`; hero→soldier via the proxy
+    `ReceiveMeleeHit`), and `UAshMassCombatProcessor` (soldier→soldier, and soldier→hero/general via
+    `ApplyHitReaction`). Tunables: hero/general `HitReactStunDuration`/`HitReactKnockbackSpeed`;
+    `UAshSoldierBehaviorConfig::StunDuration`/`KnockbackSpeed` (0 disables the flinch for a unit type).
+  - **Hero attack improvements.** (1) *Forward lunge* — the basic attack steps the hero forward slightly
+    on each hit via `LaunchCharacter` (`AttackLungeSpeed`, larger `DashAttackLungeSpeed` for the dash).
+    (2) *Stop moving to attack* — activating the attack calls `StopMovementImmediately`, and the player
+    cannot drive movement while `Ash.State.Attacking` is held, so the hero plants and commits instead of
+    sliding through the strike. (3) *Dash Attack* — pressing attack after moving continuously for
+    `DashAttackMoveSeconds` (default 2 s) opens with a `DashAttackMontage` instead of the normal combo
+    starter (`AAshHeroCharacter::ShouldUseDashAttack()` tracks the run; the ability picks the dash montage
+    for the opening hit and can chain into `ComboMontages[1]`).
+  - New: `FAshStunFragment` (added to the soldier archetype). Modified: gameplay-tag-blocked basic attack,
+    `IAshTeamAgentInterface` (+`ApplyHitReaction`), hero/general (stun + lunge + dash-run tracking),
+    movement/combat processors, soldier proxy, behavior config, StateTree general tasks.
+  - **Follow-up (field fixes + stun refactor).**
+    - *Dash attack fixed:* the dash check ran AFTER `StopMovementImmediately` had zeroed the velocity it
+      reads, so it never triggered — reordered so `ShouldUseDashAttack()` is evaluated first.
+    - *Combo 3 & 4 now damage:* each combo step is guaranteed one damage sweep — if a step's montage has no
+      Ash Melee Hit notify (or it hasn't fired), the ability sweeps once as a fallback when leaving the step
+      (`bStepSwept`), so every hit lands regardless of notify authoring.
+    - *Forward lunge made visible:* default `AttackLungeSpeed` 250→500, `DashAttackLungeSpeed` 700→1000
+      (the 250 step was ~16 cm under the 2000 braking decel). NOTE: an in-place root-motion attack montage
+      overrides the lunge — disable its root motion or author it to move forward.
+    - *Stun refactored to GE + game-wide rule data:* stun for the hero/general is now applied via a
+      **`UAshGameplayEffect_Stun`** (`GE_State_Stunned`, HasDuration, grants `Ash.State.Stunned`, duration
+      via `Ash.Data.StunDuration` SetByCaller) instead of a loose tag + manual timer — so weapon/skill data
+      can vary the duration later by swapping the effect or the SetByCaller value. New game-wide
+      **`UAshCombatRulesSettings`** (UDeveloperSettings, Project Settings → Game → "Ash Combat Rules") holds
+      `NewStunSourceImmunity` (default 2 s): after being stunned, a **different** attacker cannot stun the
+      victim again until the window elapses (the **same** attacker's continuing combo always may), so the
+      player gets a guaranteed counterattack window and infinite stun-locking is impossible. Applied
+      uniformly to hero, general, and Mass soldiers (shared `AshCombat::ApplySoldierStun` + the new
+      `FAshStunFragment::LastStunSourceId/LastStunTime`).
+  - PENDING USER: rebuild with the **editor closed** (new fragment/`UPROPERTY`s + new types — not
+    Live-Coding-safe); on the hero `GA_BasicAttack` assign a `DashAttackMontage` (carry the Ash Melee Hit
+    notify) and tune `AttackLungeSpeed`/`DashAttackLungeSpeed`; tune `Project Settings → Game → Ash Combat
+    Rules → NewStunSourceImmunity` if 2 s is not the desired window; optionally tune `DA_*_Behavior`
+    `StunDuration`/`KnockbackSpeed` and the hero/general `HitReact*` values; PIE-verify: struck units flinch
+    back + can't act briefly, a single enemy's combo stun-locks but a second enemy can't pile on for 2 s,
+    the hero lunges forward and stops to attack, a full 4-hit combo all deals damage, and a 2 s+ run into
+    attack plays the dash attack. See `Done/DONE_hit_reaction_stun.md` + `Done/DONE_hero_attack_improvements.md`.
+

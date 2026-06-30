@@ -4,7 +4,10 @@
 
 #include "Character/AshGeneralCharacter.h"
 #include "Character/AshHeroCharacter.h"
+#include "Combat/AshCombatRulesSettings.h"
+#include "Engine/World.h"
 #include "Mass/AshSoldierFragments.h"
+#include "MassEntityManager.h"
 #include "MassExecutionContext.h"
 #include "Templates/Function.h" // TFunctionRef for the per-hit damage callback
 
@@ -28,11 +31,15 @@ void UAshMassCombatProcessor::ConfigureQueries(const TSharedRef<FMassEntityManag
 	EntityQuery.AddRequirement<FAshCombatEventFragment>(EMassFragmentAccess::ReadWrite);
 	// Read-only: a Surround (outer-ring, waiting) soldier menaces but never strikes (Phase 28).
 	EntityQuery.AddRequirement<FAshSoldierStateFragment>(EMassFragmentAccess::ReadOnly);
+	// Read-only: a stunned soldier cannot strike this frame (Phase 32; movement processor owns the timer).
+	EntityQuery.AddRequirement<FAshStunFragment>(EMassFragmentAccess::ReadOnly);
 }
 
 void UAshMassCombatProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
 {
 	const float DeltaTime = Context.GetDeltaTimeSeconds();
+	const UWorld* World = Context.GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.f;
 
 	// After an attack *cycle* (a 1-3 hit combo) ends, draw the next cooldown from
 	// AttackCooldown * [1 - variance, 1 + variance] so soldiers trade blows on staggered timing rather
@@ -119,6 +126,7 @@ void UAshMassCombatProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 		const TConstArrayView<FAshCombatTargetFragment> CombatTargetList = ChunkContext.GetFragmentView<FAshCombatTargetFragment>();
 		const TArrayView<FAshCombatEventFragment> EventList = ChunkContext.GetMutableFragmentView<FAshCombatEventFragment>();
 		const TConstArrayView<FAshSoldierStateFragment> StateList = ChunkContext.GetFragmentView<FAshSoldierStateFragment>();
+		const TConstArrayView<FAshStunFragment> StunList = ChunkContext.GetFragmentView<FAshStunFragment>();
 
 		for (FMassExecutionContext::FEntityIterator It = ChunkContext.CreateEntityIterator(); It; ++It)
 		{
@@ -128,11 +136,19 @@ void UAshMassCombatProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 				continue;
 			}
 
+			// Stunned soldiers cannot attack (Phase 32): skip the whole cycle (cooldown included) until the
+			// stun ends, so a struck soldier visibly stops striking for the flinch.
+			if (StunList[It].StunTimeRemaining > 0.f)
+			{
+				continue;
+			}
+
 			FAshCombatFragment& Combat = CombatList[It];
 			FAshCombatEventFragment& Event = EventList[It];
 			const FAshCombatTargetFragment& CombatTarget = CombatTargetList[It];
 			// The cycle cooldown advances every frame; the combo helper gates the next cycle on it.
-			Combat.TimeSinceLastAttack += DeltaTime;
+			const int32 AttackerSourceId = ChunkContext.GetEntity(It).Index;
+				Combat.TimeSinceLastAttack += DeltaTime;
 
 			// Surround soldiers are the waiting outer ring: they hold the cooldown ready (so they can strike
 			// the instant they're promoted to an inner slot) but never attack while circling (Phase 28). This
@@ -160,12 +176,24 @@ void UAshMassCombatProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 					continue;
 				}
 
-				const float DistSq = FVector::DistSquared2D(MovementList[It].Position, TargetActor->GetActorLocation());
+				const FVector AttackerPos = MovementList[It].Position;
+				const float DistSq = FVector::DistSquared2D(AttackerPos, TargetActor->GetActorLocation());
 				const bool bInRange = DistSq <= FMath::Square(Combat.AttackRange);
 				AdvanceCombo(Combat, Event, bInRange, [&](int32 /*HitIndex*/)
 				{
-					if (TargetGeneral) { TargetGeneral->ReceiveSoldierDamage(Combat.AttackPower, nullptr); }
-					else               { TargetHero->ReceiveSoldierDamage(Combat.AttackPower, nullptr); }
+					// Damage + the universal hit reaction (pushed back + stunned, Phase 32). The hero/general
+					// carry the Ash.State.Stunned GAS state; ApplyHitReaction stuns + knocks them back from
+					// the soldier's position.
+					if (TargetGeneral)
+					{
+						TargetGeneral->ReceiveSoldierDamage(Combat.AttackPower, nullptr);
+						TargetGeneral->ApplyHitReaction(AttackerPos, AttackerSourceId);
+					}
+					else
+					{
+						TargetHero->ReceiveSoldierDamage(Combat.AttackPower, nullptr);
+						TargetHero->ApplyHitReaction(AttackerPos, AttackerSourceId);
+					}
 				});
 				continue;
 			}
@@ -191,6 +219,7 @@ void UAshMassCombatProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 			const float DistSq = FVector::DistSquared2D(MovementList[It].Position, TargetMovement->Position);
 			const bool bInRange = DistSq <= FMath::Square(Combat.AttackRange);
 			const FMassEntityHandle VictimHandle = Combat.Target;
+			const FVector AttackerPos = MovementList[It].Position;
 			AdvanceCombo(Combat, Event, bInRange, [&](int32 /*HitIndex*/)
 			{
 				TargetHealth->CurrentHealth = FMath::Max(0.f, TargetHealth->CurrentHealth - Combat.AttackPower);
@@ -198,6 +227,9 @@ void UAshMassCombatProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 				{
 					TargetEvent->bWasHitThisTick = true;
 				}
+				// Pushed back + stunned on being hit (Phase 32): the victim flinches away from the attacker,
+				// honoring the game-wide new-source stun immunity (same attacker may re-stun in a combo).
+				AshCombat::ApplySoldierStun(EntityManager, VictimHandle, AttackerPos, AttackerSourceId, Now);
 			});
 		}
 	});

@@ -9,9 +9,13 @@
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "AshGameplayTags.h"
+#include "Character/AshHeroCharacter.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Mass/AshSoldierProxyActor.h"
+#include "Teams/AshTeamAgentInterface.h"
 #include "Teams/AshTeamStatics.h"
 
 UAshGA_BasicAttack::UAshGA_BasicAttack(const FObjectInitializer& ObjectInitializer)
@@ -25,6 +29,11 @@ UAshGA_BasicAttack::UAshGA_BasicAttack(const FObjectInitializer& ObjectInitializ
 
 	// Tag the avatar while attacking; future hit-reaction / AI can read this.
 	ActivationOwnedTags.AddTag(AshGameplayTags::State_Attacking);
+
+	// Cannot attack while stunned or dead (Phase 32): the stun state blocks (re)activation, so a struck
+	// hero/general drops out of combat for the flinch window.
+	ActivationBlockedTags.AddTag(AshGameplayTags::State_Stunned);
+	ActivationBlockedTags.AddTag(AshGameplayTags::State_Dead);
 
 	// Default to the C++ damage effect; overridable by a Blueprint child.
 	DamageEffect = UAshGameplayEffect_Damage::StaticClass();
@@ -44,9 +53,31 @@ void UAshGA_BasicAttack::ActivateAbility(const FGameplayAbilitySpecHandle Handle
 	ComboIndex = 0;
 	bComboInputBuffered = false;
 	bComboWindowOpen = false;
+	bDashAttack = false;
 
-	// No animations authored yet: fall back to a single instant sweep.
-	if (ComboMontages.Num() == 0)
+	AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr;
+
+	// Dash attack (Phase 32): decide BEFORE stopping movement — ShouldUseDashAttack reads the live velocity,
+	// which StopMovementImmediately below would zero. If the hero pressed attack after moving continuously
+	// past its threshold, open with the dash-attack montage instead of the normal combo starter.
+	if (const AAshHeroCharacter* Hero = Cast<AAshHeroCharacter>(Avatar))
+	{
+		bDashAttack = DashAttackMontage != nullptr && Hero->ShouldUseDashAttack();
+	}
+
+	// Stop moving before executing the attack (Phase 32): if the attacker was moving, plant it first so the
+	// strike is delivered from a stop instead of sliding through it (the forward lunge below then provides the
+	// attack's small step). Applies to hero and general (both ACharacter).
+	if (ACharacter* AvatarChar = Cast<ACharacter>(Avatar))
+	{
+		if (UCharacterMovementComponent* MoveComp = AvatarChar->GetCharacterMovement())
+		{
+			MoveComp->StopMovementImmediately();
+		}
+	}
+
+	// No animations authored: fall back to a single instant sweep (unless a dash montage is available).
+	if (ComboMontages.Num() == 0 && !bDashAttack)
 	{
 		PerformHitSweep();
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
@@ -83,7 +114,13 @@ void UAshGA_BasicAttack::ActivateAbility(const FGameplayAbilitySpecHandle Handle
 
 void UAshGA_BasicAttack::PlayComboMontage(int32 Index)
 {
-	if (!ComboMontages.IsValidIndex(Index) || !ComboMontages[Index])
+	// The opener uses the dash-attack montage when this activation began on a dash (Phase 32); every other
+	// step uses the normal combo montage. Pressing inside the dash's cancel window chains into ComboMontages[1].
+	const bool bUseDash = (Index == 0) && bDashAttack && DashAttackMontage != nullptr;
+	UAnimMontage* Montage = bUseDash
+		? DashAttackMontage.Get()
+		: (ComboMontages.IsValidIndex(Index) ? ComboMontages[Index].Get() : nullptr);
+	if (!Montage)
 	{
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 		return;
@@ -96,9 +133,22 @@ void UAshGA_BasicAttack::PlayComboMontage(int32 Index)
 	ComboIndex = Index;
 	bComboWindowOpen = false;
 	bComboInputBuffered = false;
+	bStepSwept = false; // this step hasn't dealt its damage yet (guaranteed at notify, or on leaving the step)
+
+	// Step forward slightly as the hit begins (Phase 32): a small forward lunge (larger for the dash opener)
+	// so the attack reads as a committed step instead of a stationary swing.
+	const float LungeSpeed = bUseDash ? DashAttackLungeSpeed : AttackLungeSpeed;
+	if (LungeSpeed > 0.f)
+	{
+		const FGameplayAbilityActorInfo* ActorInfo = GetCurrentActorInfo();
+		if (ACharacter* AvatarChar = ActorInfo ? Cast<ACharacter>(ActorInfo->AvatarActor.Get()) : nullptr)
+		{
+			AvatarChar->LaunchCharacter(AvatarChar->GetActorForwardVector() * LungeSpeed, /*bXYOverride=*/true, /*bZOverride=*/false);
+		}
+	}
 
 	CurrentMontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-		this, NAME_None, ComboMontages[Index], ComboMontagePlayRate);
+		this, NAME_None, Montage, ComboMontagePlayRate);
 	CurrentMontageTask->OnCompleted.AddDynamic(this, &UAshGA_BasicAttack::OnComboMontageEnded);
 	CurrentMontageTask->OnInterrupted.AddDynamic(this, &UAshGA_BasicAttack::OnComboMontageInterrupted);
 	CurrentMontageTask->OnCancelled.AddDynamic(this, &UAshGA_BasicAttack::OnComboMontageInterrupted);
@@ -152,6 +202,13 @@ void UAshGA_BasicAttack::AdvanceCombo()
 	bComboInputBuffered = false;
 	bComboWindowOpen = false;
 
+	// Guarantee the step we're leaving dealt its damage even if its montage had no melee-hit notify (the
+	// cause of "combo 3 & 4 don't deal damage"). No-op if the notify already swept this step.
+	if (!bStepSwept)
+	{
+		PerformHitSweep();
+	}
+
 	const int32 NextIndex = ComboIndex + 1;
 	if (!ComboMontages.IsValidIndex(NextIndex))
 	{
@@ -164,7 +221,13 @@ void UAshGA_BasicAttack::AdvanceCombo()
 
 void UAshGA_BasicAttack::OnComboMontageEnded()
 {
-	// A montage reached its end without being cancelled: the combo is over.
+	// A montage reached its end without being cancelled: the combo is over. Guarantee this final step dealt
+	// its damage (a montage with no melee-hit notify, or one whose notify hasn't fired, still lands a hit).
+	if (!bStepSwept)
+	{
+		PerformHitSweep();
+	}
+
 	CurrentMontageTask = nullptr;
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
@@ -206,6 +269,9 @@ void UAshGA_BasicAttack::PerformHitSweep()
 	{
 		return;
 	}
+
+	// This combo step has now dealt its damage; the leave-step fallback won't double it.
+	bStepSwept = true;
 
 	// Sweep a sphere in front of the avatar (instant melee hit).
 	const FVector Start = Avatar->GetActorLocation();
@@ -260,5 +326,13 @@ void UAshGA_BasicAttack::PerformHitSweep()
 		HitTargets.Add(TargetASC);
 
 		SourceASC->ApplyGameplayEffectSpecToTarget(*DamageSpec.Data.Get(), TargetASC);
+
+		// Universal hit reaction (Phase 32): the struck hero/general is pushed back slightly and stunned
+		// (Ash.State.Stunned). Team is irrelevant here — only hostiles take the damage GE above, and the
+		// reaction follows the same hit, so an allied general is never struck by the player's sweep.
+		if (IAshTeamAgentInterface* Agent = Cast<IAshTeamAgentInterface>(HitActor))
+		{
+			Agent->ApplyHitReaction(Start, static_cast<int32>(Avatar->GetUniqueID()));
+		}
 	}
 }

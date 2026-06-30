@@ -141,6 +141,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|Formation")
 	TArray<FVector> FireteamSlotOffsets;
 
+	// --- Hit reaction (Phase 32: pushed back + stunned on being hit) ---
+
+	/**
+	 * Seconds a soldier is stunned when struck: it can neither move nor attack while the stun is active
+	 * (the Mass-soldier equivalent of the Ash.State.Stunned GAS state the hero/general use). A fresh hit
+	 * refreshes the window. 0 disables the flinch entirely for this unit type.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|HitReact", meta = (ClampMin = "0.0"))
+	float StunDuration = 0.35f;
+
+	/**
+	 * Initial knockback speed (cm/s) away from the attacker on being hit — "pushed back ever so slightly".
+	 * The shove decays to zero over StunDuration (movement processor), so the total push is small. 0 = no
+	 * knockback (stun only).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Behavior|HitReact", meta = (ClampMin = "0.0"))
+	float KnockbackSpeed = 250.f;
+
 	// --- Facing (fixes "attacks while facing the wrong way") ---
 
 	/**

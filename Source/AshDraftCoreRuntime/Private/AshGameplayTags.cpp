@@ -30,6 +30,7 @@ namespace AshGameplayTags
 
 	// GAS data tags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Data_Damage, "Ash.Data.Damage", "Damage magnitude carried into the damage Gameplay Effect.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Data_StunDuration, "Ash.Data.StunDuration", "Stun length (seconds) carried into the stun Gameplay Effect via SetByCaller.");
 
 	// Animation gameplay events
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Event_Hit_Melee, "Ash.Event.Hit.Melee", "Melee montage contact frame; triggers the attack damage sweep.");

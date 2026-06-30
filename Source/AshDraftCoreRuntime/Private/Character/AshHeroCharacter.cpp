@@ -5,9 +5,12 @@
 #include "AbilitySystem/AshAbilitySystemComponent.h"
 #include "AbilitySystem/AshAttributeSet.h"
 #include "AbilitySystem/AshGameplayAbility.h"
+#include "AbilitySystem/AshGameplayEffect_Stun.h"
 #include "Animation/AnimSequenceBase.h"
 #include "AshGameplayTags.h"
+#include "Combat/AshCombatRulesSettings.h"
 #include "Engine/Texture2D.h"
+#include "GameplayEffect.h"
 #include "Hero/AshHeroConfig.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -75,6 +78,9 @@ AAshHeroCharacter::AAshHeroCharacter(const FObjectInitializer& ObjectInitializer
 	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
 
 	AttributeSet = CreateDefaultSubobject<UAshAttributeSet>(TEXT("AttributeSet"));
+
+	// Default stun effect (overridable per-Blueprint, e.g. for a heavier/longer stun on certain weapons).
+	StunEffectClass = UAshGameplayEffect_Stun::StaticClass();
 }
 
 UAbilitySystemComponent* AAshHeroCharacter::GetAbilitySystemComponent() const
@@ -312,6 +318,86 @@ void AAshHeroCharacter::ReceiveSoldierDamage(float Amount, AActor* /*DamageInsti
 		FMath::Max(0.f, CurrentHealth - Amount));
 }
 
+void AAshHeroCharacter::ApplyHitReaction(const FVector& SourceLocation, int32 SourceId)
+{
+	if (bIsDead)
+	{
+		return;
+	}
+
+	// Pushed back ever so slightly: a brief launch away from the attacker. Knockback is always applied (it
+	// never blocks input, so it doesn't prevent the counterattack window the stun-immunity rule protects).
+	if (HitReactKnockbackSpeed > 0.f)
+	{
+		FVector Dir = GetActorLocation() - SourceLocation;
+		Dir.Z = 0.f;
+		Dir = Dir.GetSafeNormal2D();
+		if (Dir.IsNearlyZero())
+		{
+			Dir = -GetActorForwardVector();
+		}
+		LaunchCharacter(Dir * HitReactKnockbackSpeed, /*bXYOverride=*/true, /*bZOverride=*/false);
+	}
+
+	ApplyStun(HitReactStunDuration, SourceId);
+}
+
+void AAshHeroCharacter::ApplyStun(float Duration, int32 SourceId)
+{
+	if (bIsDead || Duration <= 0.f || !AbilitySystemComponent || !StunEffectClass)
+	{
+		return;
+	}
+
+	// Game-wide new-source immunity (UAshCombatRulesSettings): a continuous combo from the SAME attacker
+	// re-stuns freely (unavoidable by design), but after being stunned a DIFFERENT attacker is locked out
+	// until the window elapses — so while the first attacker is on cooldown the player has a clean window
+	// to counterattack and infinite stun-locking by a crowd is impossible.
+	const UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.f;
+	const float Immunity = GetDefault<UAshCombatRulesSettings>()->NewStunSourceImmunity;
+	const bool bSameSource = (SourceId != INDEX_NONE) && (SourceId == LastStunSourceId);
+	if (!bSameSource && Immunity > 0.f && (Now - LastStunTime) < Immunity)
+	{
+		return; // still immune to a new stun source — leave the hero free to act
+	}
+	LastStunSourceId = SourceId;
+	LastStunTime = Now;
+
+	// Apply the stun as a Gameplay Effect (GE_State_Stunned grants Ash.State.Stunned for Duration via
+	// SetByCaller, then expires on its own). The attack ability's ActivationBlockedTags include the tag, so
+	// it can't re-fire; cancel any in-flight attack now so the combo is interrupted by the hit.
+	FGameplayEffectContextHandle Context = AbilitySystemComponent->MakeEffectContext();
+	FGameplayEffectSpecHandle Spec = AbilitySystemComponent->MakeOutgoingSpec(StunEffectClass, 1.f, Context);
+	if (Spec.IsValid())
+	{
+		Spec.Data->SetSetByCallerMagnitude(AshGameplayTags::Data_StunDuration, Duration);
+		AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*Spec.Data);
+	}
+	AbilitySystemComponent->CancelAllAbilities();
+}
+
+bool AAshHeroCharacter::IsStunned() const
+{
+	return AbilitySystemComponent && AbilitySystemComponent->HasMatchingGameplayTag(AshGameplayTags::State_Stunned);
+}
+
+bool AAshHeroCharacter::ShouldUseDashAttack() const
+{
+	const UWorld* World = GetWorld();
+	if (!World || DashAttackMoveSeconds <= 0.f)
+	{
+		return false;
+	}
+
+	const float Now = World->GetTimeSeconds();
+	// Moving now = a move input arrived within the reset gap AND the character is actually translating
+	// (so a blocked-against-a-wall hold doesn't count). Run length is measured from when movement began.
+	const bool bMovingNow = (Now - LastMoveInputTime) <= MoveInputResetGap
+		&& GetVelocity().SizeSquared2D() > FMath::Square(50.f);
+	return bMovingNow && (Now - MoveInputStartTime) >= DashAttackMoveSeconds;
+}
+
 float AAshHeroCharacter::GetHealth() const
 {
 	return AttributeSet ? AttributeSet->GetHealth() : 0.f;
@@ -414,7 +500,34 @@ void AAshHeroCharacter::Input_Move(const FInputActionValue& Value)
 		return;
 	}
 
+	// Movement is impossible while stunned or dead (Phase 32). The knockback launch still carries the hero
+	// (it is a CMC velocity, not input), but the player cannot drive movement during the flinch.
+	if (bIsDead || IsStunned())
+	{
+		return;
+	}
+
+	// Stop moving to attack (Phase 32): while a basic attack is in flight (Ash.State.Attacking) the player
+	// cannot drive movement, so the hero plants and commits to the strike instead of sliding through it. The
+	// attack's own forward lunge still steps it forward. Movement resumes the instant the combo ends.
+	if (AbilitySystemComponent && AbilitySystemComponent->HasMatchingGameplayTag(AshGameplayTags::State_Attacking))
+	{
+		return;
+	}
+
 	const FVector2D Axis = Value.Get<FVector2D>();
+
+	// Track continuous-movement time so a basic attack pressed after moving for DashAttackMoveSeconds plays
+	// the dash-attack variant (Phase 32). A gap longer than MoveInputResetGap (released input) restarts the run.
+	if (!Axis.IsNearlyZero())
+	{
+		const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+		if (Now - LastMoveInputTime > MoveInputResetGap)
+		{
+			MoveInputStartTime = Now; // movement (re)started after a stop
+		}
+		LastMoveInputTime = Now;
+	}
 
 	// Move relative to the camera's yaw so movement is screen-relative (third-person).
 	const FRotator YawRotation(0.f, MovementController->GetControlRotation().Yaw, 0.f);

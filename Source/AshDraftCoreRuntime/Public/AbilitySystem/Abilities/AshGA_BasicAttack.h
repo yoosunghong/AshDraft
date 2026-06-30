@@ -90,6 +90,28 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Ash|Attack|Combo")
 	TArray<TObjectPtr<UAnimMontage>> ComboMontages;
 
+	/**
+	 * Dash Attack montage (Phase 32): played as the opening hit instead of ComboMontages[0] when the hero
+	 * pressed attack after moving continuously for AAshHeroCharacter::DashAttackMoveSeconds. Should carry the
+	 * same Ash Melee Hit (+ optional Ash Combo Window to chain into ComboMontages[1]) notifies. Optional —
+	 * with none assigned the normal combo opener is used even on a dash.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Ash|Attack|Combo")
+	TObjectPtr<UAnimMontage> DashAttackMontage;
+
+	/**
+	 * Forward lunge speed (cm/s) applied as the hero starts each combo hit so the attack steps forward
+	 * (Phase 32). Applied via LaunchCharacter; the step is brief because ground braking decelerates it. 0
+	 * disables the lunge. NOTE: if an attack montage uses (in-place) root motion it will override this — turn
+	 * the montage's root motion off, or author its root motion to move forward, for the step to show.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Ash|Attack", meta = (ClampMin = "0.0"))
+	float AttackLungeSpeed = 500.f;
+
+	/** Forward lunge speed (cm/s) for the dash-attack opener — usually larger than AttackLungeSpeed. */
+	UPROPERTY(EditDefaultsOnly, Category = "Ash|Attack", meta = (ClampMin = "0.0"))
+	float DashAttackLungeSpeed = 1000.f;
+
 	/** Play rate applied to combo montages (raise to speed the whole combo up). */
 	UPROPERTY(EditDefaultsOnly, Category = "Ash|Attack|Combo", meta = (ClampMin = "0.1"))
 	float ComboMontagePlayRate = 1.f;
@@ -131,6 +153,16 @@ private:
 
 	/** True while the current montage's cancel window is open. */
 	bool bComboWindowOpen = false;
+
+	/** This activation opened with the dash attack (so PlayComboMontage(0) uses DashAttackMontage). */
+	bool bDashAttack = false;
+
+	/**
+	 * True once the current combo step has run its damage sweep (via its melee-hit notify). If a step is
+	 * left (cancelled into the next, or the montage ends) without having swept — e.g. a montage with no Ash
+	 * Melee Hit notify authored — the ability sweeps once as a fallback so EVERY combo hit deals damage.
+	 */
+	bool bStepSwept = false;
 
 	/** The montage task for the step currently playing (kept so we can detach it on cancel). */
 	UPROPERTY()

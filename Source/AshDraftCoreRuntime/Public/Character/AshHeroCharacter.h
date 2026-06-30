@@ -14,6 +14,7 @@ class UAshAttributeSet;
 class UAshGameplayAbility;
 class UAshHeroConfig;
 class UAshInputConfig;
+class UGameplayEffect;
 class UAnimSequenceBase;
 class UCameraComponent;
 class UInputMappingContext;
@@ -90,7 +91,20 @@ public:
 	virtual EAshTeamId GetAshTeamId() const override { return TeamId; }
 	virtual FText GetAshDisplayName() const override { return DisplayName; }
 	virtual UTexture2D* GetAshPortrait() const override;
+	virtual void ApplyHitReaction(const FVector& SourceLocation, int32 SourceId) override;
 	//~End of IAshTeamAgentInterface
+
+	/** True while the hero is stunned (the Ash.State.Stunned tag is present): movement and attacks blocked. */
+	UFUNCTION(BlueprintPure, Category = "Ash|Combat")
+	bool IsStunned() const;
+
+	/**
+	 * True if the next basic attack should be the Dash Attack variant: the hero has been moving
+	 * continuously for at least DashAttackMoveSeconds when the attack is pressed (Phase 32). Read by
+	 * UAshGA_BasicAttack on activation to pick its dash-attack montage.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Ash|Combat")
+	bool ShouldUseDashAttack() const;
 
 	/** Current health, read from the GAS AttributeSet. */
 	UFUNCTION(BlueprintPure, Category = "Ash|Health")
@@ -126,6 +140,15 @@ protected:
 
 	/** One-time death handling: cancels abilities, disables input/collision, broadcasts. */
 	void HandleDeath();
+
+	/**
+	 * Applies the stun state for Duration seconds (Phase 32), honoring the game-wide new-source immunity
+	 * (UAshCombatRulesSettings): the same attacker may re-stun freely (a combo) but a *different* attacker is
+	 * rejected until the immunity window elapses. When allowed it applies GE_State_Stunned (granting
+	 * Ash.State.Stunned for Duration via SetByCaller) and cancels the in-flight attack. SourceId identifies
+	 * the attacker (its UniqueID, or an attacker Mass entity index for soldier hits).
+	 */
+	void ApplyStun(float Duration, int32 SourceId);
 
 	/** Move input handler: translates a 2D axis into world movement relative to control yaw. */
 	void Input_Move(const FInputActionValue& Value);
@@ -237,6 +260,42 @@ private:
 	/** Initial (and maximum) stamina. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Attributes", meta = (AllowPrivateAccess = "true", ClampMin = "1.0"))
 	float InitialMaxStamina = 100.f;
+
+	// --- Hit reaction / stun (Phase 32) ---
+
+	/** Seconds the hero is stunned (no move/attack) when struck. 0 disables the hero's stun entirely. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Combat|HitReact", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float HitReactStunDuration = 0.35f;
+
+	/** Speed (cm/s) of the slight knockback launch away from the attacker on being hit. 0 = no knockback. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Combat|HitReact", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float HitReactKnockbackSpeed = 350.f;
+
+	/** Stun Gameplay Effect applied on being hit (GE_State_Stunned). The new-source immunity rule still gates it. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Combat|HitReact", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UGameplayEffect> StunEffectClass;
+
+	// --- Attack-move tracking (Phase 32: dash attack after sustained movement) ---
+
+	/** Continuous-movement seconds required before a basic attack becomes the Dash Attack variant. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Combat|HitReact", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float DashAttackMoveSeconds = 2.f;
+
+	/** Gap (s) without a move input after which movement is considered to have stopped (resets the run timer). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Combat|HitReact", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float MoveInputResetGap = 0.15f;
+
+	/** World time movement (continuous move input) began; the run length is Now - this. */
+	float MoveInputStartTime = -1.e30f;
+
+	/** World time of the most recent move input; used to detect when movement stopped. */
+	float LastMoveInputTime = -1.e30f;
+
+	/** Identifier of the attacker that last stunned the hero (UniqueID / Mass entity index). */
+	int32 LastStunSourceId = INDEX_NONE;
+
+	/** World time (s) of the last applied stun; the new-source immunity window is measured from here. */
+	float LastStunTime = -1.e30f;
 
 	/** Guards one-time ability granting across PossessedBy / BeginPlay. */
 	bool bAbilitiesGranted = false;

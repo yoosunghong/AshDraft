@@ -73,6 +73,8 @@ void UAshMassMovementProcessor::ConfigureQueries(const TSharedRef<FMassEntityMan
 	// surrounding (waiting) soldier orbits its target (Phase 28).
 	EntityQuery.AddRequirement<FAshSoldierStateFragment>(EMassFragmentAccess::ReadWrite);
 	EntityQuery.AddRequirement<FAshBehaviorFragment>(EMassFragmentAccess::ReadOnly);
+	// ReadWrite: the movement processor owns the stun countdown + decaying knockback slide (Phase 32).
+	EntityQuery.AddRequirement<FAshStunFragment>(EMassFragmentAccess::ReadWrite);
 }
 
 void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
@@ -157,6 +159,7 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 		const TConstArrayView<FAshTeamFragment> TeamList = ChunkContext.GetFragmentView<FAshTeamFragment>();
 		const TArrayView<FAshSoldierStateFragment> StateList = ChunkContext.GetMutableFragmentView<FAshSoldierStateFragment>();
 		const TConstArrayView<FAshBehaviorFragment> BehaviorList = ChunkContext.GetFragmentView<FAshBehaviorFragment>();
+		const TArrayView<FAshStunFragment> StunList = ChunkContext.GetMutableFragmentView<FAshStunFragment>();
 
 		for (FMassExecutionContext::FEntityIterator It = ChunkContext.CreateEntityIterator(); It; ++It)
 		{
@@ -174,6 +177,21 @@ void UAshMassMovementProcessor::Execute(FMassEntityManager& EntityManager, FMass
 			if (!bAlive)
 			{
 				Movement.Velocity = FVector::ZeroVector;
+				continue;
+			}
+
+			// Hit-reaction stun (Phase 32): a struck soldier neither steers nor strikes (combat processor
+			// gates separately) while stunned — it only slides under its decaying knockback. The shove eases
+			// to zero over the stun window (scaled by remaining/duration) so it reads as a brief shove, not a
+			// teleport. Separation/objective steering resumes the moment the stun ends.
+			FAshStunFragment& Stun = StunList[It];
+			if (Stun.StunTimeRemaining > 0.f)
+			{
+				Stun.StunTimeRemaining = FMath::Max(0.f, Stun.StunTimeRemaining - DeltaTime);
+				const float Alpha = (Stun.StunDuration > KINDA_SMALL_NUMBER)
+					? FMath::Clamp(Stun.StunTimeRemaining / Stun.StunDuration, 0.f, 1.f) : 0.f;
+				Movement.Velocity = Stun.KnockbackVelocity * Alpha;
+				Movement.Position += Movement.Velocity * DeltaTime;
 				continue;
 			}
 

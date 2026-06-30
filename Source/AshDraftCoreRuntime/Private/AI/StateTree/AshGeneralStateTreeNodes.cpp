@@ -24,6 +24,23 @@ namespace
 	{
 		return (General && General->GetConfig()) ? General->GetConfig()->ObjectiveAcceptanceRadius : 400.f;
 	}
+
+	/**
+	 * While stunned (Phase 32) the general can neither move nor attack: stop any active move and let the task
+	 * keep running (the stun clears on its own timer). Returns true if the caller should bail out this tick.
+	 */
+	bool HandleStunned(const AAshGeneralCharacter* General, AAIController* AI)
+	{
+		if (General && General->IsStunned())
+		{
+			if (AI)
+			{
+				AI->StopMovement();
+			}
+			return true;
+		}
+		return false;
+	}
 }
 
 // ===================================================================================================
@@ -41,6 +58,12 @@ EStateTreeRunStatus FAshSTTask_ExecuteOrder::Tick(FStateTreeExecutionContext& Co
 	if (!General || General->IsDead())
 	{
 		return EStateTreeRunStatus::Failed;
+	}
+
+	// Stunned: frozen this tick (no move/order), but keep the order running so it resumes after the stun.
+	if (HandleStunned(General, Inst.AIController))
+	{
+		return EStateTreeRunStatus::Running;
 	}
 
 	// Self-yield to a higher-priority sub-objective: failing re-selects from the parent, which then
@@ -95,6 +118,12 @@ EStateTreeRunStatus FAshSTTask_AttackTarget::Tick(FStateTreeExecutionContext& Co
 	if (!General || General->IsDead())
 	{
 		return EStateTreeRunStatus::Failed;
+	}
+
+	// Stunned: hold position and don't strike this tick; the stun clears on its own timer.
+	if (HandleStunned(General, Inst.AIController))
+	{
+		return EStateTreeRunStatus::Running;
 	}
 
 	AActor* Enemy = General->GetSensedEnemy();
@@ -190,6 +219,12 @@ EStateTreeRunStatus FAshSTTask_AssaultStronghold::Tick(FStateTreeExecutionContex
 	if (!General || General->IsDead())
 	{
 		return EStateTreeRunStatus::Failed;
+	}
+
+	// Stunned: frozen this tick; keep assaulting after the stun clears.
+	if (HandleStunned(General, Inst.AIController))
+	{
+		return EStateTreeRunStatus::Running;
 	}
 
 	// A live enemy outranks a stronghold assault — yield so AttackTarget is selected.

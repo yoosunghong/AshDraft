@@ -11,6 +11,7 @@
 #include "Components/WidgetComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
+#include "Combat/AshCombatRulesSettings.h"
 #include "Mass/AshSoldierAnimInstance.h"
 #include "Mass/AshSoldierFragments.h"
 #include "Mass/AshSoldierVisualConfig.h"
@@ -340,6 +341,14 @@ void AAshSoldierProxyActor::ReceiveMeleeHit(float Damage, const AActor* _Instiga
 		{
 			Event->bWasHitThisTick = true;
 		}
+
+		// Pushed back + stunned on being hit (Phase 32): the shared rule helper stamps the stun fragment from
+		// the unit's behavior config and applies the game-wide new-source immunity (the hero, identified by
+		// its UniqueID, may re-stun the same soldier freely). Knocked back away from the instigator.
+		const FVector FromLocation = _Instigator ? _Instigator->GetActorLocation() : GetActorLocation();
+		const int32 SourceId = _Instigator ? static_cast<int32>(_Instigator->GetUniqueID()) : INDEX_NONE;
+		const float Now = World->GetTimeSeconds();
+		AshCombat::ApplySoldierStun(EntityManager, RepresentedEntity, FromLocation, SourceId, Now);
 
 		// HUD combat feed (Phase 30): record the player's strike on this Mass soldier. The feed ignores
 		// non-player instigators, so AI-vs-soldier hits (e.g. a general's sweep) are harmlessly skipped.

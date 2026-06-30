@@ -401,6 +401,46 @@ struct FAshCombatEventFragment : public FMassFragment
 };
 
 /**
+ * Hit-reaction stun + knockback (Phase 32). When a soldier is struck (by the hero/general melee sweep
+ * via the proxy, or by another soldier in the combat processor) it is briefly *stunned*: it cannot
+ * move or attack while StunTimeRemaining > 0, and it is *pushed back ever so slightly* by a decaying
+ * knockback. This is the Mass-soldier analogue of the Ash.State.Stunned GAS state used by the
+ * hero/general (those carry an ASC; soldiers carry this fragment instead). The movement processor owns
+ * the countdown + knockback slide and suppresses steering while stunned; the combat processor reads
+ * StunTimeRemaining to skip striking. All tunables come from UAshSoldierBehaviorConfig (StunDuration /
+ * KnockbackSpeed), so a unit type with StunDuration 0 simply never flinches.
+ */
+USTRUCT()
+struct FAshStunFragment : public FMassFragment
+{
+	GENERATED_BODY()
+
+	/** Seconds of stun left; > 0 means the soldier can neither steer nor strike this frame. */
+	UPROPERTY()
+	float StunTimeRemaining = 0.f;
+
+	/** Full stun length of the current flinch; used to ease the knockback slide to zero over the window. */
+	UPROPERTY()
+	float StunDuration = 0.f;
+
+	/** Initial knockback velocity (cm/s) away from the attacker; scaled by remaining/duration each frame. */
+	UPROPERTY()
+	FVector KnockbackVelocity = FVector::ZeroVector;
+
+	/**
+	 * Identifier of the attacker that last stunned this soldier (an attacker's Mass entity index, or an
+	 * actor's UniqueID). The same source may re-stun freely (a continuous combo); a *different* source is
+	 * blocked until UAshCombatRulesSettings::NewStunSourceImmunity elapses (Phase 32 game-wide stun rule).
+	 */
+	UPROPERTY()
+	int32 LastStunSourceId = INDEX_NONE;
+
+	/** World time (s) of the last applied stun; the new-source immunity window is measured from here. */
+	UPROPERTY()
+	float LastStunTime = -1.e30f;
+};
+
+/**
  * Death / dying state (Phase 27). When a soldier's health first reaches zero the death processor does
  * NOT destroy the entity immediately — it flips bIsDying and stamps DeathTime, so the soldier lingers
  * as a corpse for a configurable display window (default 5 s) while its representation proxy plays the

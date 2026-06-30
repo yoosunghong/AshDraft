@@ -48,6 +48,10 @@ namespace AshGameplayTags
 	// passed from an attack ability into the damage Gameplay Effect (ARCHITECTURE 5.3).
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Data_Damage);
 
+	// Data.StunDuration carries the SetByCaller stun length (seconds) into GE_State_Stunned, so the
+	// duration can come from the attacker's weapon / skill data later instead of a hardcoded value.
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Data_StunDuration);
+
 	// Gameplay events sent from animation. Event.Hit.Melee marks the contact frame
 	// of a melee attack montage (via UAshAnimNotify_MeleeHit) so the ability runs
 	// its damage sweep at the right moment instead of on activation frame 0.

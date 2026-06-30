@@ -3,6 +3,7 @@
 #pragma once
 
 #include "UObject/Interface.h"
+#include "Math/Vector.h"
 #include "Teams/AshTeamTypes.h"
 #include "AshTeamAgentInterface.generated.h"
 
@@ -44,4 +45,14 @@ public:
 	 * Callers guard for null so implementers may return null freely.
 	 */
 	virtual UTexture2D* GetAshPortrait() const { return nullptr; }
+
+	/**
+	 * Universal hit reaction (Phase 32): the agent is pushed back ever so slightly and briefly stunned
+	 * (Ash.State.Stunned), unable to move or attack for the stun window. SourceLocation is the attacker's
+	 * world position (knock the agent back away from it); SourceId is a stable identifier of the attacker
+	 * (an actor's UniqueID, or an attacker Mass entity index) used by the game-wide new-source stun-immunity
+	 * rule. Default is a no-op so non-combatant implementers (e.g. a verification dummy) need no change; the
+	 * hero and general override it.
+	 */
+	virtual void ApplyHitReaction(const FVector& SourceLocation, int32 SourceId) {}
 };

@@ -17,6 +17,7 @@ class UAshAttributeSet;
 class UAshGameplayAbility;
 class UAshHeroConfig;
 class UAshUnitHealthBarWidget;
+class UGameplayEffect;
 class UAnimSequenceBase;
 class UTexture2D;
 class UWidgetComponent;
@@ -74,7 +75,15 @@ public:
 	virtual EAshTeamId GetAshTeamId() const override { return TeamId; }
 	virtual FText GetAshDisplayName() const override { return DisplayName; }
 	virtual UTexture2D* GetAshPortrait() const override;
+	virtual void ApplyHitReaction(const FVector& SourceLocation, int32 SourceId) override;
 	//~End of IAshTeamAgentInterface
+
+	/**
+	 * True while the general is stunned (the Ash.State.Stunned tag is present): the StateTree tasks stop its
+	 * movement and skip issuing orders, and the attack ability is blocked by its blocked-tags (Phase 32).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Ash|Combat")
+	bool IsStunned() const;
 
 	/** Team identity. */
 	UFUNCTION(BlueprintPure, Category = "Ash|Team")
@@ -202,6 +211,14 @@ protected:
 
 	/** One-time death handling: stop the StateTree, disable collision/movement, broadcast, unregister. */
 	void HandleDeath();
+
+	/**
+	 * Applies the stun state for Duration seconds, honoring the game-wide new-source immunity
+	 * (UAshCombatRulesSettings): the same attacker re-stuns freely, a different attacker waits out the
+	 * window. When allowed it applies GE_State_Stunned, cancels abilities and stops movement. SourceId
+	 * identifies the attacker (UniqueID / attacker Mass entity index).
+	 */
+	void ApplyStun(float Duration, int32 SourceId);
 
 private:
 	/** GAS ability system component owned by this general (PoC: ASC on the avatar). */
@@ -332,6 +349,26 @@ private:
 
 	/** World time of the most recent player shove. */
 	float LastPlayerPushTime = -1.e30f;
+
+	// --- Hit reaction / stun (Phase 32) ---
+
+	/** Seconds the general is stunned (no move/attack) when struck. 0 disables the general's stun. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Combat|HitReact", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float HitReactStunDuration = 0.35f;
+
+	/** Speed (cm/s) of the slight knockback launch away from the attacker on being hit. 0 = no knockback. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Combat|HitReact", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float HitReactKnockbackSpeed = 350.f;
+
+	/** Stun Gameplay Effect applied on being hit (GE_State_Stunned). The new-source immunity rule gates it. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ash|Combat|HitReact", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UGameplayEffect> StunEffectClass;
+
+	/** Identifier of the attacker that last stunned this general (UniqueID / attacker Mass entity index). */
+	int32 LastStunSourceId = INDEX_NONE;
+
+	/** World time (s) of the last applied stun; the new-source immunity window is measured from here. */
+	float LastStunTime = -1.e30f;
 
 	/** Guards. */
 	bool bAbilitiesGranted = false;
